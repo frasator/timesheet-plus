@@ -1,0 +1,25 @@
+{
+    "name": "Timesheet-Plus",
+    "version": "1.0",
+    "description": "Horas restantes.",
+    "manifest_version": 2,
+    "icons": {
+        "48": "icon48.png",
+        "128": "icon128.png"
+    },
+    "permissions": [
+    ],
+    "content_scripts": [
+        {
+            "matches": [
+                "https://vitropeople--fhcm2.vf.force.com/*"
+            ],
+            "css": [
+                "style.css"
+            ],
+            "js": [
+                "horas-dev.js"
+            ]
+        }
+    ]
+}
