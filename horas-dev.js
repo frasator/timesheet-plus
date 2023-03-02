@@ -315,9 +315,10 @@ class TimesheetPlus {
             start1.setHours(inicio)
             start1.setMinutes(minutoInicio)
 
-            const c = (comida - inicio) * 60 //comida a las 5 horas
+            const c = (comida - inicio) * 60
             const rndComida = this.randomInt(this.randomInt(c - 30, c), this.randomInt(c, c + 30))
-            const end1 = new Date(start1.getTime() + rndComida * 60000)
+            const end1 = new Date(start1.getTime() + (rndComida * 60000))
+
 
             const start1Date = this.adjustClockinTime(start1, false)
             const end1Date = this.adjustClockinTime(end1, false)
@@ -336,9 +337,9 @@ class TimesheetPlus {
             ////
 
             const rndComiendo = this.randomInt(duracionComida - 5, duracionComida + 5)
-            const start2 = new Date(end1.getTime() + rndComiendo * 60000)
+            const start2 = new Date(end1.getTime() + (rndComiendo * 60000))
             const restantes = this.minutosJornada - rndComida
-            const end2 = new Date(start2.getTime() + restantes * 60000)
+            const end2 = new Date(start2.getTime() + ((restantes + this.randomInt(-5, 10)) * 60000))
 
             const start2Date = this.adjustClockinTime(start2, false)
             const end2Date = this.adjustClockinTime(end2, false)
