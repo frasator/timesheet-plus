@@ -62,7 +62,7 @@ class TimesheetPlus {
             this.renderHoy(left, data)
             await this.renderMesHastaHoy(left, data)
             await this.renderMes(left, data)
-            this.renderAccumulatedTimePerDay()
+            await this.renderAccumulatedTimePerDay()
             this.renderConfiguracion(left)
         }
         const keepAlive = async () => {
@@ -593,14 +593,14 @@ class TimesheetPlus {
         return cls.indexOf('weekend') != -1
     }
 
-    renderAccumulatedTimePerDay() {
+    async renderAccumulatedTimePerDay() {
         const main = this.getMain()
         const allDays = main.querySelectorAll("timesheet-day")
         let accumulatedMin = 0
         for (let i = 0; i < allDays.length; i++) {
             const day = allDays[i]
             const dayTitle = day.querySelector('[class^="wx-timesheet-day"]')
-            const esMedio = this.esMedioDiaDeTrabajo(dayTitle)
+            const esMedio = await this.esMedioDiaDeTrabajo(dayTitle)
             let minutosJornada = 0
             if (!this.esFinde(dayTitle)) {
                 minutosJornada = esMedio === true ? this.minutosMediaJornada : this.minutosJornada
