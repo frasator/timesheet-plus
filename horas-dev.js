@@ -517,42 +517,12 @@ class TimesheetPlus {
         return true
     }
     async esMedioDiaDeTrabajo(dayTitle) {
-        const dayIndicators = dayTitle.querySelector('.wx-timesheet-day__indicators')
-        let foundComment = false
-        if (dayIndicators.children.length > 0) {
-            for (let i = 0; i < dayIndicators.children.length; i++) {
-                const child = dayIndicators.children[i]
-                for (let j = 0; j < child.classList.length; j++) {
-                    const clase = child.classList[j]
-                    if (clase.indexOf('indicator-self-comment') != -1) {
-                        foundComment = true
-                        break
-                    }
-                }
-                if (foundComment === true) {
-                    break
-                }
-            }
-        }
-        if (foundComment === true) {
-            let isExpanded = dayTitle.getAttribute('aria-expanded') === 'true'
-            if (!isExpanded) {
-                dayTitle.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
-            }
-            let els = Array.from(dayTitle.parentNode.querySelectorAll('textarea'))
-            if (!isExpanded) {
-                dayTitle.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
-            }
-            els = els.filter(el => {
-                return el.getAttribute('ng-reflect-model').toLowerCase().indexOf('medio') != -1
-            })
-            if (els.length > 0) {
-                return true
-            }
-        }
-        return false
+        return this.esDiaDe('medio', dayTitle)
     }
     esDiaDeGuardia(dayTitle) {
+        return this.esDiaDe('guardia', dayTitle)
+    }
+    esDiaDe(tipoDeDia, dayTitle) {
         const dayIndicators = dayTitle.querySelector('.wx-timesheet-day__indicators')
         let foundComment = false
         if (dayIndicators.children.length > 0) {
@@ -575,14 +545,18 @@ class TimesheetPlus {
             if (!isExpanded) {
                 dayTitle.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
             }
-            let els = Array.from(dayTitle.parentNode.querySelectorAll('textarea'))
+            let els1 = Array.from(dayTitle.parentNode.querySelectorAll('textarea'))
+            let els2 = Array.from(dayTitle.parentNode.querySelectorAll('.wx-comment__body'))
             if (!isExpanded) {
                 dayTitle.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
             }
-            els = els.filter(el => {
-                return el.getAttribute('ng-reflect-model').toLowerCase().indexOf('guardia') != -1
+            els1 = els1.filter(el => {
+                return el.getAttribute('ng-reflect-model').toLowerCase().indexOf(tipoDeDia) != -1
             })
-            if (els.length > 0) {
+            els2 = els2.filter(el => {
+                return el.innerHTML.trim().toLowerCase().indexOf(tipoDeDia) != -1
+            })
+            if (els1.length > 0 || els2.length > 0) {
                 return true
             }
         }
