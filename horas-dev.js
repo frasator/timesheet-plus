@@ -73,7 +73,7 @@ class TimesheetPlus {
         await repetir()
         this.repetirInterval = setInterval(repetir, 5000)
 
-        this.keepAliveInterval = setInterval(keepAlive, 60000*15)
+        this.keepAliveInterval = setInterval(keepAlive, 60000 * 15)
 
         await new Promise(r => setTimeout(r, 1000))
         this.desactivarBotonEnviar()
@@ -398,19 +398,22 @@ class TimesheetPlus {
         let accumulatedMin = 0
         for (let i = 0; i < allDays.length; i++) {
             const day = allDays[i]
-            const daySummary = day.querySelector('.wx-timesheet-day__summary')
-            const text = daySummary.innerText.trim()
-            if (text != "") {
-                const split = text.split('h')
-                const hora = parseInt(split[0].trim())
-                const minuto = parseInt(split[1].trim().split('m')[0].trim())
-                const minutosDia = hora * 60 + minuto
-                accumulatedMin += minutosDia
+            const dayTitle = day.querySelector('[class^="wx-timesheet-day"]')
+            if (!this.esDiaDeGuardia(dayTitle)) {
+                const daySummary = day.querySelector('.wx-timesheet-day__summary')
+                const text = daySummary.innerText.trim()
+                if (text != "") {
+                    const split = text.split('h')
+                    const hora = parseInt(split[0].trim())
+                    const minuto = parseInt(split[1].trim().split('m')[0].trim())
+                    const minutosDia = hora * 60 + minuto
+                    accumulatedMin += minutosDia
+                }
             }
         }
         const horas = Math.floor(accumulatedMin / 60)
         const minutos = accumulatedMin % 60
-        return { horas: horas, minutos: minutos, totalMinutos: (horas * 60 + minutos) }
+        return { horas: horas, minutos: minutos, totalMinutos: accumulatedMin }
     }
     async getDiasTrabajoMes() {
         const dayTitles = this.getMain().querySelectorAll('.wx-timesheet-day__header-weekday')
@@ -443,7 +446,7 @@ class TimesheetPlus {
             const dayTitle = dayTitles[i]
             const dayIndicators = dayTitle.querySelector('.wx-timesheet-day__indicators')
             if (this.esDiaDeTrabajo(dayIndicators)) {
-                const esMedioDiaDeTrabajo = await this.esMedioDiaDeTrabajo(dayTitle, dayIndicators)
+                const esMedioDiaDeTrabajo = await this.esMedioDiaDeTrabajo(dayTitle)
                 if (esMedioDiaDeTrabajo) {
                     contadorMediosDias++
                     minutosATrabajar += this.minutosMediaJornada
@@ -513,7 +516,8 @@ class TimesheetPlus {
         }
         return true
     }
-    async esMedioDiaDeTrabajo(dayTitle, dayIndicators) {
+    async esMedioDiaDeTrabajo(dayTitle) {
+        const dayIndicators = dayTitle.querySelector('.wx-timesheet-day__indicators')
         let foundComment = false
         if (dayIndicators.children.length > 0) {
             for (let i = 0; i < dayIndicators.children.length; i++) {
@@ -534,58 +538,113 @@ class TimesheetPlus {
             let isExpanded = dayTitle.getAttribute('aria-expanded') === 'true'
             if (!isExpanded) {
                 dayTitle.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
-                // await new Promise(r => setTimeout(r, 10))
             }
-            const els = dayTitle.parentNode.querySelectorAll('textarea[ng-reflect-model="MEDIO"]')
+            let els = Array.from(dayTitle.parentNode.querySelectorAll('textarea'))
             if (!isExpanded) {
                 dayTitle.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
-                // await new Promise(r => setTimeout(r, 10))
             }
+            els = els.filter(el => {
+                return el.getAttribute('ng-reflect-model').toLowerCase().indexOf('medio') != -1
+            })
             if (els.length > 0) {
                 return true
             }
         }
         return false
     }
+    esDiaDeGuardia(dayTitle) {
+        const dayIndicators = dayTitle.querySelector('.wx-timesheet-day__indicators')
+        let foundComment = false
+        if (dayIndicators.children.length > 0) {
+            for (let i = 0; i < dayIndicators.children.length; i++) {
+                const child = dayIndicators.children[i]
+                for (let j = 0; j < child.classList.length; j++) {
+                    const clase = child.classList[j]
+                    if (clase.indexOf('indicator-self-comment') != -1) {
+                        foundComment = true
+                        break
+                    }
+                }
+                if (foundComment === true) {
+                    break
+                }
+            }
+        }
+        if (foundComment === true) {
+            let isExpanded = dayTitle.getAttribute('aria-expanded') === 'true'
+            if (!isExpanded) {
+                dayTitle.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+            }
+            let els = Array.from(dayTitle.parentNode.querySelectorAll('textarea'))
+            if (!isExpanded) {
+                dayTitle.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+            }
+            els = els.filter(el => {
+                return el.getAttribute('ng-reflect-model').toLowerCase().indexOf('guardia') != -1
+            })
+            if (els.length > 0) {
+                return true
+            }
+        }
+        return false
+    }
+    esFinde(dayTitle) {
+        const cls = dayTitle.getAttribute('class')
+        return cls.indexOf('weekend') != -1
+    }
 
     renderAccumulatedTimePerDay() {
         const main = this.getMain()
         const allDays = main.querySelectorAll("timesheet-day")
-        const totalMinDay = 7 * 60 + 45
         let accumulatedMin = 0
         for (let i = 0; i < allDays.length; i++) {
             const day = allDays[i]
-            const dayTitle = day.firstElementChild
+            const dayTitle = day.querySelector('[class^="wx-timesheet-day"]')
+            const esMedio = this.esMedioDiaDeTrabajo(dayTitle)
+            let minutosJornada = 0
+            if (!this.esFinde(dayTitle)) {
+                minutosJornada = esMedio === true ? this.minutosMediaJornada : this.minutosJornada
+            }
             const daySummary = day.querySelector('.wx-timesheet-day__summary')
             const text = daySummary.innerText.trim()
             const id = dayTitle.getAttribute("id")
             const accumuladoId = `${id}-acumulado`
+            let accEl = dayTitle.querySelector(`#${accumuladoId}`)
+            if (accEl == null) {
+                accEl = document.createElement("div")
+                accEl.setAttribute("id", `${id}-acumulado`)
+                accEl.classList.add('acumulado-por-dia', 'fs60')
+                dayTitle.appendChild(accEl)
+            }
             if (text != "") {
                 const split = text.split('h')
                 const minutes = parseInt(split[0].trim()) * 60 + parseInt(split[1].trim().split('m')[0].trim())
-                const diffMin = minutes - totalMinDay
-                accumulatedMin += diffMin
-
-                let accEl = dayTitle.querySelector(`#${accumuladoId}`)
-                if (accEl == null) {
-                    accEl = document.createElement("div")
-                    accEl.setAttribute("id", `${id}-acumulado`)
-                    accEl.classList.add('acumulado-por-dia', 'fs60')
-                    dayTitle.appendChild(accEl)
+                let diffMin = 0
+                if (!this.esDiaDeGuardia(dayTitle)) {
+                    diffMin = minutes - minutosJornada
+                    accumulatedMin += diffMin
                 }
+
                 const colorDiffMin = diffMin < 0 ? "naranja" : "turquesa";
                 const colorAccMin = accumulatedMin < 0 ? "naranja" : "turquesa";
-                accEl.innerHTML = `
-                    <span class="gris">Día: </span>
-                    <span class="${colorDiffMin}" title="Horas trabajadas de más en el dia.">
-                        ${this.renderMinutos(diffMin, true)}
-                    </span>
-                    &nbsp;&nbsp;
-                    <span class="gris">Mes: </span>
-                    <span class="${colorAccMin}" title="Horas acumuladas en el mes hasta fecha.">
-                        ${this.renderMinutos(accumulatedMin, true)}
-                    </span>
-                `
+
+                if (minutes > 0)
+                    accEl.innerHTML = `
+                        <span class="gris">Día: </span>
+                        <span class="${colorDiffMin}" title="Horas trabajadas de más en el dia.">
+                            ${this.renderMinutos(diffMin, true)}
+                        </span>
+                        &nbsp;&nbsp;
+                        <span class="gris">Mes: </span>
+                        <span class="${colorAccMin}" title="Horas acumuladas en el mes hasta fecha.">
+                            ${this.renderMinutos(accumulatedMin, true)}
+                        </span>
+                    `
+                else {
+                    accEl.innerHTML = ''
+                }
+            } else {
+                accEl.innerHTML = ''
             }
         }
     }
