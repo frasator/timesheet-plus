@@ -66,7 +66,9 @@ class TimesheetPlus {
             this.renderConfiguracion(left)
         }
         const keepAlive = async () => {
-            await fetch(window.location.href)
+            const res = await fetch(window.location.href)
+            // const text = await res.text()
+            // console.log(text)
         }
         await repetir()
         this.repetirInterval = setInterval(repetir, 5000)
