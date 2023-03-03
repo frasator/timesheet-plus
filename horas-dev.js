@@ -35,6 +35,7 @@ class TimesheetPlus {
     async init() {
         await new Promise(r => setTimeout(r, 2000))
         clearInterval(this.repetirInterval)
+        clearInterval(this.keepAliveInterval)
         const left = document.createElement('div')
         left.setAttribute('id', 'TimesheetPlus')
         left.classList.add('shadow1')
@@ -64,8 +65,13 @@ class TimesheetPlus {
             this.renderAccumulatedTimePerDay()
             this.renderConfiguracion(left)
         }
+        const keepAlive = async () => {
+            await fetch(window.location.href)
+        }
         await repetir()
         this.repetirInterval = setInterval(repetir, 5000)
+
+        this.keepAliveInterval = setInterval(keepAlive, 60000*15)
 
         await new Promise(r => setTimeout(r, 1000))
         this.desactivarBotonEnviar()
