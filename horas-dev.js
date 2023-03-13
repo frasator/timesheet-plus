@@ -374,6 +374,19 @@ class TimesheetPlus {
         const monthDay = ('00' + dateNow.getDate()).slice(-2)
         return `timesheet-day > [id="timesheet-day-${year}-${month}-${monthDay}"]`
     }
+    getDayTitleDate(dayTitle) {
+        const auxSplit = dayTitle.getAttribute('id').split('timesheet-day-')[1].split('-')
+        const dtYear = parseInt(auxSplit[0])
+        const dtMonth = parseInt(auxSplit[1]) - 1
+        const dtDay = parseInt(auxSplit[2])
+
+        const date = new Date()
+        date.setFullYear(dtYear)
+        date.setMonth(dtMonth)
+        date.setDate(dtDay)
+        date.setHours(0, 0, 1)
+        return date
+    }
 
     getTiempoTrabajadoHoy() {
         let horas = 0, minutos = 0
@@ -425,7 +438,7 @@ class TimesheetPlus {
         let contadorDias = 0
         let contadorNoTrabajo = 0
         let contadorMediosDias = 0
-        let posicionHoy = -1
+        let posicionHoy = 0
         let minutosATrabajar = 0
         let minutosATrabajarHastaHoy = 0
 
@@ -472,9 +485,9 @@ class TimesheetPlus {
             } else {
                 enterosHastaHoy++
             }
-            if (dayTitle === todayTitle) {
-                posicionHoy = i + 1
-                break
+            const dayDate = this.getDayTitleDate(dayTitle)
+            if (dayDate < new Date()) {
+                posicionHoy++
             }
         }
 
