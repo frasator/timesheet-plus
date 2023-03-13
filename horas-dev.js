@@ -641,7 +641,9 @@ class TimesheetPlus {
         const t1 = 'Abrir hoy'
         const t2 = 'Registrar tiempos aleatoriamente hoy'
         const t = this.getTiempoTrabajadoHoy()
-        const mj = dat.diasTrabajo[dat.posicionHoy - 1].esMedio ? this.minutosMediaJornada : this.minutosJornada
+
+        const datHoy = dat.diasTrabajo[dat.posicionHoy - 1]
+        const mj = datHoy != null ? (datHoy.esMedio ? this.minutosMediaJornada : this.minutosJornada) : 0
         hoyEl.innerHTML = `
             <div style="height:10px"></div>
             <div class="titulo1 d-flex">
