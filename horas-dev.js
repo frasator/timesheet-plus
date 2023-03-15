@@ -458,17 +458,16 @@ class TimesheetPlus {
         for (let i = 0; i < dayTitles.length; i++) {
             const dayTitle = dayTitles[i]
             const dayIndicators = dayTitle.querySelector('.wx-timesheet-day__indicators')
-            if (this.esDiaDeTrabajo(dayIndicators)) {
-                const esMedioDiaDeTrabajo = await this.esMedioDiaDeTrabajo(dayTitle)
-                if (esMedioDiaDeTrabajo) {
-                    contadorMediosDias++
-                    minutosATrabajar += this.minutosMediaJornada
-                } else {
-                    contadorDias++
-                    minutosATrabajar += this.minutosJornada
-                }
+            const esMedioDiaDeTrabajo = await this.esMedioDiaDeTrabajo(dayTitle)
+            if (esMedioDiaDeTrabajo) {
+                contadorMediosDias++
+                minutosATrabajar += this.minutosMediaJornada
                 diasTrabajo.push({ dayTitle: dayTitle, esMedio: esMedioDiaDeTrabajo })
-            } else {
+            } else if (this.esDiaDeTrabajo(dayIndicators)) {
+                contadorDias++
+                minutosATrabajar += this.minutosJornada
+                diasTrabajo.push({ dayTitle: dayTitle, esMedio: esMedioDiaDeTrabajo })
+            }else{
                 contadorNoTrabajo++
             }
         }

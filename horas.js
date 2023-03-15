@@ -1,5 +1,5 @@
 (function(d, s, id){
-	var url = 'https://raw.githubusercontent.com/frasator/bamboo-plus/gh-pages/timesheet-plus.js'
+	var url = 'https://raw.githubusercontent.com/frasator/timesheet-plus/master/horas-dev.js'
     var js, fjs = d.getElementsByTagName(s)[0];
     if (d.getElementById(id)){ return; }
     js = d.createElement(s); js.id = id;
