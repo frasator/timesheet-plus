@@ -479,15 +479,20 @@ class TimesheetPlus {
         for (let i = 0; i < diasTrabajo.length; i++) {
             const dayTitle = diasTrabajo[i].dayTitle
             const esMedio = diasTrabajo[i].esMedio
-            minutosATrabajarHastaHoy += (esMedio ? this.minutosMediaJornada : this.minutosJornada)
-            if (esMedio) {
-                mediosHastaHoy++
-            } else {
-                enterosHastaHoy++
-            }
+
             const dayDate = this.getDayTitleDate(dayTitle)
             if (dayDate < new Date()) {
                 posicionHoy++
+            } else {
+                break
+            }
+
+            if (esMedio) {
+                minutosATrabajarHastaHoy += this.minutosMediaJornada
+                mediosHastaHoy++
+            } else {
+                minutosATrabajarHastaHoy += this.minutosJornada
+                enterosHastaHoy++
             }
         }
 
@@ -925,7 +930,7 @@ class TimesheetPlus {
         .d-flex > * { min-width: 0px; min-height:0px; }
 
         /**/
-        #TimesheetPlus{
+        #TimesheetPlus {
             position: absolute;
             left: 15px;
             margin-top: 25px;
