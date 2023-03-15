@@ -473,26 +473,22 @@ class TimesheetPlus {
             }
         }
 
-
         let enterosHastaHoy = 0
         let mediosHastaHoy = 0
         for (let i = 0; i < diasTrabajo.length; i++) {
             const dayTitle = diasTrabajo[i].dayTitle
             const esMedio = diasTrabajo[i].esMedio
-
             const dayDate = this.getDayTitleDate(dayTitle)
-            if (dayDate < new Date()) {
+            const now = new Date()
+            if (dayDate <= now && dayDate.getDate() <= now.getDate()) {
                 posicionHoy++
-            } else {
-                break
-            }
-
-            if (esMedio) {
-                minutosATrabajarHastaHoy += this.minutosMediaJornada
-                mediosHastaHoy++
-            } else {
-                minutosATrabajarHastaHoy += this.minutosJornada
-                enterosHastaHoy++
+                if (esMedio) {
+                    minutosATrabajarHastaHoy += this.minutosMediaJornada
+                    mediosHastaHoy++
+                } else {
+                    minutosATrabajarHastaHoy += this.minutosJornada
+                    enterosHastaHoy++
+                }
             }
         }
 
