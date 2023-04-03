@@ -467,7 +467,7 @@ class TimesheetPlus {
                 contadorDias++
                 minutosATrabajar += this.minutosJornada
                 diasTrabajo.push({ dayTitle: dayTitle, esMedio: esMedioDiaDeTrabajo })
-            }else{
+            } else {
                 contadorNoTrabajo++
             }
         }
@@ -479,7 +479,9 @@ class TimesheetPlus {
             const esMedio = diasTrabajo[i].esMedio
             const dayDate = this.getDayTitleDate(dayTitle)
             const now = new Date()
-            if (dayDate <= now && dayDate.getDate() <= now.getDate()) {
+            const mismoMes = dayDate.getMonth() == now.getMonth()
+            const antesHoy = dayDate <= now && dayDate.getDate() <= now.getDate()
+            if (!mismoMes || (mismoMes && antesHoy)) {
                 posicionHoy++
                 if (esMedio) {
                     minutosATrabajarHastaHoy += this.minutosMediaJornada
