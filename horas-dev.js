@@ -63,6 +63,7 @@ class TimesheetPlus {
             await this.renderMesHastaHoy(left, data)
             await this.renderMes(left, data)
             await this.renderAccumulatedTimePerDay()
+            await this.restoreDiaExpandido(data)
             this.renderConfiguracion(left)
         }
         const keepAlive = async () => {
@@ -71,12 +72,23 @@ class TimesheetPlus {
             // console.log(text)
         }
         await repetir()
-        this.repetirInterval = setInterval(repetir, 5000)
+        this.repetirInterval = setInterval(repetir, 10000)
 
         this.keepAliveInterval = setInterval(keepAlive, 60000 * 15)
 
         await new Promise(r => setTimeout(r, 1000))
         this.desactivarBotonEnviar()
+    }
+
+    async restoreDiaExpandido(data) {
+        // Restaurar expandido actual
+        if (data.diaExpandido != null) {
+            document.body.scrollTo(0, data.diaExpandido.position)
+            let isExpanded = data.diaExpandido.elem.getAttribute('aria-expanded') === 'true'
+            if (!isExpanded) {
+                data.diaExpandido.elem.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+            }
+        }
     }
 
     crearBotonInicio() {
@@ -450,7 +462,7 @@ class TimesheetPlus {
             const dayTitle = dayTitles[i]
             let isExpanded = dayTitle.getAttribute('aria-expanded') === 'true'
             if (isExpanded) {
-                diaExpandido = dayTitle
+                diaExpandido = {position: posicionSroll, elem: dayTitle}
             }
         }
 
@@ -493,15 +505,6 @@ class TimesheetPlus {
             }
         }
 
-        // Restaurar expandido actual
-        document.body.scrollTo(0, posicionSroll)
-        if (diaExpandido != null) {
-            let isExpanded = diaExpandido.getAttribute('aria-expanded') === 'true'
-            if (!isExpanded) {
-                diaExpandido.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
-            }
-        }
-
         return {
             posicionHoy: posicionHoy,
             notrabajo: contadorNoTrabajo,
@@ -511,7 +514,8 @@ class TimesheetPlus {
             minutosATrabajarHastaHoy: minutosATrabajarHastaHoy,
             diasTrabajo: diasTrabajo,
             enterosHastaHoy: enterosHastaHoy,
-            mediosHastaHoy: mediosHastaHoy
+            mediosHastaHoy: mediosHastaHoy,
+            diaExpandido: diaExpandido
         }
     }
     esDiaDeTrabajo(dayIndicators) {
@@ -716,7 +720,7 @@ class TimesheetPlus {
                     <span class="verde b"> ${this.renderMinutos(t.totalMinutos)}</span>
                     <span class=""> de </span>
                     <span class="b"> ${this.renderMinutos(dat.minutosATrabajarHastaHoy)}</span>
-                    <span class="gris fs80"> 
+                    <span class="gris fs80">
                         ${dat.enterosHastaHoy} x ${this.renderMinutos(mj)} +
                         ${dat.mediosHastaHoy} x ${this.renderMinutos(mmj)}
                     </span>
@@ -774,8 +778,8 @@ class TimesheetPlus {
                     <span class="verde b"> ${this.renderMinutos(t.horas * 60 + t.minutos)}</span>
                     <span class=""> de </span>
                     <span class="b"> ${this.renderMinutos(minutosATrabajar)}</span>
-                    <span class="gris fs80"> 
-                        ${dat.total} x ${this.renderMinutos(mj)} + 
+                    <span class="gris fs80">
+                        ${dat.total} x ${this.renderMinutos(mj)} +
                         ${dat.totalMedios} x ${this.renderMinutos(mmj)}
                     </span>
                 </div>
@@ -1065,7 +1069,7 @@ class TimesheetPlus {
             border-color: #2188ff !important;
             box-shadow: rgba(27, 31, 35, 0.075) 0px 1px 2px 0px inset, rgba(3, 102, 214, 0.3) 0px 0px 0px 2.8px !important;
         }
-        
+
         input.texto:focus:invalid {
             border-color: #ff2121 !important;
             box-shadow: rgba(27, 31, 35, 0.075) 0px 1px 2px 0px inset, rgba(214, 3, 3, 0.3) 0px 0px 0px 2.8px !important;
@@ -1177,7 +1181,7 @@ class TimesheetPlus {
         svg.querySelector('.iconic-clock-hour-hand').setAttribute('transform', 'rotate(' + 360 * (hours / 43200) + ',192,192)')
         return div
     }
-    randomInt(min, max) { // min and max included 
+    randomInt(min, max) { // min and max included
         return Math.floor(Math.random() * (max - min + 1) + min)
     }
 }
