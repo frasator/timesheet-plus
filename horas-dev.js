@@ -417,14 +417,15 @@ class TimesheetPlus {
         }
         return { horas: horas, minutos: minutos, totalMinutos: (horas * 60 + minutos) }
     }
-    getTiempoTrabajadoMes() {
+    async getTiempoTrabajadoMes() {
         const main = this.getMain()
         const allDays = main.querySelectorAll("timesheet-day")
         let accumulatedMin = 0
         for (let i = 0; i < allDays.length; i++) {
             const day = allDays[i]
             const dayTitle = day.querySelector('[class^="wx-timesheet-day"]')
-            if (!this.esDiaDeGuardia(dayTitle)) {
+            const esDiaDeGuardia = await this.esDiaDeGuardia(dayTitle)
+            if (!esDiaDeGuardia) {
                 const daySummary = day.querySelector('.wx-timesheet-day__summary')
                 const text = daySummary.innerText.trim()
                 if (text != "") {
@@ -536,12 +537,12 @@ class TimesheetPlus {
         return true
     }
     async esMedioDiaDeTrabajo(dayTitle) {
-        return this.esDiaDe('medio', dayTitle)
+        return await this.esDiaDe('medio', dayTitle)
     }
-    esDiaDeGuardia(dayTitle) {
-        return this.esDiaDe('guardia', dayTitle)
+    async esDiaDeGuardia(dayTitle) {
+        return await this.esDiaDe('guardia', dayTitle)
     }
-    esDiaDe(tipoDeDia, dayTitle) {
+    async esDiaDe(tipoDeDia, dayTitle) {
         const dayIndicators = dayTitle.querySelector('.wx-timesheet-day__indicators')
         let foundComment = false
         if (dayIndicators.children.length > 0) {
@@ -566,15 +567,15 @@ class TimesheetPlus {
             }
             let els1 = Array.from(dayTitle.parentNode.querySelectorAll('textarea'))
             let els2 = Array.from(dayTitle.parentNode.querySelectorAll('.wx-comment__body'))
-            if (!isExpanded) {
-                dayTitle.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
-            }
             els1 = els1.filter(el => {
-                return el.getAttribute('ng-reflect-model').toLowerCase().indexOf(tipoDeDia) != -1
+                return el.value.toLowerCase().indexOf(tipoDeDia) != -1
             })
             els2 = els2.filter(el => {
                 return el.innerHTML.trim().toLowerCase().indexOf(tipoDeDia) != -1
             })
+            if (!isExpanded) {
+                dayTitle.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+            }
             if (els1.length > 0 || els2.length > 0) {
                 return true
             }
@@ -613,7 +614,8 @@ class TimesheetPlus {
                 const split = text.split('h')
                 const minutes = parseInt(split[0].trim()) * 60 + parseInt(split[1].trim().split('m')[0].trim())
                 let diffMin = 0
-                if (!this.esDiaDeGuardia(dayTitle)) {
+                const esDiaDeGuardia = await this.esDiaDeGuardia(dayTitle)
+                if (!esDiaDeGuardia) {
                     diffMin = minutes - minutosJornada
                     accumulatedMin += diffMin
                 }
@@ -693,7 +695,7 @@ class TimesheetPlus {
             mesEl.setAttribute('id', 'meshoy')
             parent.appendChild(mesEl)
         }
-        const t = this.getTiempoTrabajadoMes()
+        const t = await this.getTiempoTrabajadoMes()
         const mj = this.minutosJornada
         const mmj = this.minutosMediaJornada
 
@@ -745,7 +747,7 @@ class TimesheetPlus {
             mesEl.setAttribute('id', 'mes')
             parent.appendChild(mesEl)
         }
-        const t = this.getTiempoTrabajadoMes()
+        const t = await this.getTiempoTrabajadoMes()
         const mj = this.minutosJornada
         const mmj = this.minutosMediaJornada
 
