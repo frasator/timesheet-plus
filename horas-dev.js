@@ -49,6 +49,8 @@ class TimesheetPlus {
         bar.appendChild(nuevoIntervalo)
         const actualizarUltimoFinBtn = this.crearBotonFin()
         bar.appendChild(actualizarUltimoFinBtn)
+        const autoBtn = this.crearBotonAuto()
+        bar.appendChild(autoBtn)
 
         // const clockEl = this.createSVGClock()
         // bar.appendChild(clockEl)
@@ -97,7 +99,6 @@ class TimesheetPlus {
         button.style.marginRight = '5px'
         button.classList.add('boton', 'boton-azul')
         button.innerHTML = `
-            <div style="padding:0 10px 3px 0" class="fs120"> &plus; </div>
             <div> Inicio </div>
         `
         button.addEventListener('click', async () => {
@@ -127,12 +128,25 @@ class TimesheetPlus {
         button.style.marginRight = '5px'
         button.classList.add('boton', 'boton-rojo')
         button.innerHTML = `
-            <div style="padding:0 10px 0 0"> &#128472; </div>
             <div> Fin </div>
         `
         button.addEventListener('click', async () => {
             await this.actualizarUltimaHora()
             await this.saveDay()
+        })
+        return button
+    }
+
+    crearBotonAuto() {
+        const button = document.createElement('div')
+        button.setAttribute('id', 'botonFin')
+        button.style.marginRight = '5px'
+        button.classList.add('boton', 'boton-azul2')
+        button.innerHTML = `
+            <div> Auto </div>
+        `
+        button.addEventListener('click', async () => {
+            await this.crearDiaAleatorio()
         })
         return button
     }
@@ -670,7 +684,6 @@ class TimesheetPlus {
             <div class="titulo1 d-flex">
                 <div class="i">Hoy</div>
                 <div class="flex"></div>
-                <div id="aleatorio" class="pntr azul n" title="${t2}">&#9860; &nbsp;</div>
                 <div id="verHoy" class="pntr azul n" title="${t1}">&#x27A1; &nbsp;</div>
             </div>
             <div class="contenido1">
@@ -682,10 +695,6 @@ class TimesheetPlus {
         const verHoy = hoyEl.querySelector('#verHoy')
         verHoy.addEventListener('click', () => {
             this.mostrarDia()
-        })
-        const aleatorio = hoyEl.querySelector('#aleatorio')
-        aleatorio.addEventListener('click', async () => {
-            await this.crearDiaAleatorio()
         })
     }
     async renderMesHastaHoy(parent, dat) {
@@ -934,13 +943,13 @@ class TimesheetPlus {
 
         /**/
         #TimesheetPlus {
-            position: absolute;
-            left: 15px;
-            margin-top: 25px;
+            position: fixed;
+            top:200px;
+            left:300px;
             background-color: #fafafa;
             border-radius: 3px;
             padding: 20px;
-            z-index:0;
+            z-index:1000;
         }
         .acumulado-por-dia {
             position:absolute;
@@ -955,10 +964,9 @@ class TimesheetPlus {
             display: flex;
             justify-content: center;
             align-items: center;
-            width :140px;
-            height :40px;
+            width :100px;
+            height :25px;
             cursor :pointer;
-            font-size :1.2em;
             color :white;
             text-align :center;
             padding :9px 0;
@@ -969,6 +977,9 @@ class TimesheetPlus {
         }
         .boton-azul{
             background-color :#003e63;
+        }
+        .boton-azul2{
+            background-color :#1e88e5;
         }
 
         .hr{
