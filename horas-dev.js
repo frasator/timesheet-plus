@@ -943,9 +943,8 @@ class TimesheetPlus {
 
         /**/
         #TimesheetPlus {
-            position: fixed;
-            top:200px;
-            left:300px;
+            position: absolute;
+            left:15px;
             background-color: #fafafa;
             border-radius: 3px;
             padding: 20px;
