@@ -139,7 +139,7 @@ class TimesheetPlus {
 
     crearBotonAuto() {
         const button = document.createElement('div')
-        button.setAttribute('id', 'botonFin')
+        button.setAttribute('id', 'botonAuto')
         button.style.marginRight = '5px'
         button.classList.add('boton', 'boton-azul2')
         button.innerHTML = `
@@ -971,6 +971,9 @@ class TimesheetPlus {
             text-align :center;
             padding :9px 0;
             border-radius: 3px;
+        }
+        #botonAuto{
+            width :75px;
         }
         .boton-rojo{
             background-color :#CC3333;
