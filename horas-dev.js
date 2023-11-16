@@ -32,6 +32,25 @@ class TimesheetPlus {
     getMain() {
         return document.querySelector('.wx-timesheet__main-body')
     }
+    getSheetDate() {
+        const dayTitle = document.querySelector('[id^="timesheet-day"]')
+        const auxSplit = dayTitle.getAttribute('id').split('timesheet-day-')[1].split('-')
+        const dtYear = parseInt(auxSplit[0])
+        const dtMonth = parseInt(auxSplit[1])
+        return { month: dtMonth, year: dtYear }
+    }
+    async saveMinutosRestantes(dat) {
+        const t = await this.getTiempoTrabajadoMes()
+        const mj = this.minutosJornada
+        const mmj = this.minutosMediaJornada
+
+        const minutosATrabajar = (mj * dat.total) + (mmj * dat.totalMedios)
+        const minutosRestantes = (t.horas * 60 + t.minutos) - (minutosATrabajar)
+
+        const { month, year } = this.getSheetDate()
+
+        this.storageSet(`restantes-${month}-${year}`, { month, year, minutosRestantes })
+    }
     async init() {
         await new Promise(r => setTimeout(r, 2000))
         clearInterval(this.repetirInterval)
@@ -66,7 +85,9 @@ class TimesheetPlus {
             await this.renderMes(left, data)
             await this.renderAccumulatedTimePerDay()
             await this.restoreDiaExpandido(data)
+            this.renderMinutosMeses(left)
             this.renderConfiguracion(left)
+            this.saveMinutosRestantes(data)
         }
         const keepAlive = async () => {
             const res = await fetch(window.location.href)
@@ -477,7 +498,7 @@ class TimesheetPlus {
             const dayTitle = dayTitles[i]
             let isExpanded = dayTitle.getAttribute('aria-expanded') === 'true'
             if (isExpanded) {
-                diaExpandido = {position: posicionSroll, elem: dayTitle}
+                diaExpandido = { position: posicionSroll, elem: dayTitle }
             }
         }
 
@@ -804,7 +825,37 @@ class TimesheetPlus {
             this.alternarBotonEnviar()
         })
     }
+    renderMinutosMeses(parent) {
+        let mesesEl = parent.querySelector('#minutosMeses')
+        if (mesesEl == null) {
+            mesesEl = document.createElement('div')
+            mesesEl.setAttribute('id', 'minutosMeses')
+            parent.appendChild(mesesEl)
+        }
+        const keys = Object.keys(localStorage)
+        const dataMeses = keys.filter(k => k.startsWith('timesheetplus-restantes'))
+            .map(k => k.replace('timesheetplus-', ''))
+            .map(k => this.storageGet(k))
+        dataMeses.sort((a, b) => {
+            return a.month - b.month
+        })
 
+        const renderMes = (d) => {
+            return `
+                <div>
+                    ${d.month}-${d.year}: ${this.renderMinutos(d.minutosRestantes, true)}
+                </div>
+            `
+        }
+        mesesEl.innerHTML = `
+            <div style="height:10px"></div>
+            <div class="titulo1 d-flex">
+                <div class="i">Minutos restantes por mes</div>
+            </div>
+            ${dataMeses.map(d => renderMes(d)).join('')}
+            </div>
+            `
+    }
     renderConfiguracion(parent) {
         let configEl = parent.querySelector('#configuracion')
         if (configEl == null) {
