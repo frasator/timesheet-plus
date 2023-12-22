@@ -840,19 +840,30 @@ class TimesheetPlus {
             return a.month - b.month
         })
 
+
         const renderMes = (d) => {
             return `
                 <div>
-                    ${d.month}-${d.year}: ${this.renderMinutos(d.minutosRestantes, true)}
+                    ${this.meses[d.month - 1]} ${d.year}: <span class="${d.minutosRestantes < 0 ? 'naranja' : 'turquesa'}">${this.renderMinutos(d.minutosRestantes, true)}</span>
                 </div>
             `
         }
+        let minutosYear = 0
+        for (let d of dataMeses) {
+            minutosYear += d.minutosRestantes
+        }
         mesesEl.innerHTML = `
             <div style="height:10px"></div>
-            <div class="titulo1 d-flex">
-                <div class="i">Minutos restantes por mes</div>
-            </div>
-            ${dataMeses.map(d => renderMes(d)).join('')}
+                <div class="titulo1 d-flex">
+                    <div class="i">Minutos restantes total</div>
+                </div>
+                <div>
+                    Total: <span class="${minutosYear < 0 ? 'naranja' : 'turquesa'}">${this.renderMinutos(minutosYear, true)}</span>
+                </div>
+                <div class="titulo1 d-flex">
+                    <div class="i">Minutos restantes por mes</div>
+                </div>
+                ${dataMeses.map(d => renderMes(d)).join('')}
             </div>
             `
     }
