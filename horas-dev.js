@@ -29,6 +29,9 @@ class TimesheetPlus {
     storageGet(key) {
         return JSON.parse(localStorage.getItem(`timesheetplus-${key}`))
     }
+    storageRemove(key) {
+        localStorage.removeItem(`timesheetplus-${key}`)
+    }
     getMain() {
         return document.querySelector('.wx-timesheet__main-body')
     }
@@ -55,14 +58,28 @@ class TimesheetPlus {
         await new Promise(r => setTimeout(r, 2000))
         clearInterval(this.repetirInterval)
         clearInterval(this.keepAliveInterval)
-        const left = document.createElement('div')
-        left.setAttribute('id', 'TimesheetPlus')
-        left.classList.add('shadow1')
-        left.classList.add('fs110')
+        const mainEl = document.createElement('div')
+        mainEl.setAttribute('id', 'TimesheetPlus')
+        mainEl.classList.add('shadow1')
+        mainEl.classList.add('fs110')
+        mainEl.classList.add('d-flex', 'jc-fs', 'ai-s')
+
+        const col1 = document.createElement('div')
+        const col2 = document.createElement('div')
+        col1.setAttribute('id', 'col1')
+        col2.setAttribute('id', 'col2')
+        col2.classList.add('flex')
+        col1.classList.add('flex')
+        col2.classList.add('flex')
+        col2.style.paddingLeft = "1.5em"
+        mainEl.appendChild(col1)
+        mainEl.appendChild(col2)
+
+
 
         const bar = document.createElement('div')
         bar.classList.add('d-flex', 'ai-c', 'jc-c')
-        left.appendChild(bar)
+        col1.appendChild(bar)
 
         const nuevoIntervalo = this.crearBotonInicio()
         bar.appendChild(nuevoIntervalo)
@@ -75,32 +92,40 @@ class TimesheetPlus {
         // bar.appendChild(clockEl)
 
         const headerRow = document.querySelector('.wx-timesheet__header')
-        headerRow.appendChild(left)
+        headerRow.appendChild(mainEl)
 
         ////
         const repetir = async () => {
-            const data = await this.getDiasTrabajoMes()
-            this.renderHoy(left, data)
-            await this.renderMesHastaHoy(left, data)
-            await this.renderMes(left, data)
-            await this.renderAccumulatedTimePerDay()
-            await this.restoreDiaExpandido(data)
-            this.renderMinutosMeses(left)
-            this.renderConfiguracion(left)
-            this.saveMinutosRestantes(data)
+            await this.refresh()
         }
         const keepAlive = async () => {
             const res = await fetch(window.location.href)
             // const text = await res.text()
             // console.log(text)
         }
-        await repetir()
+        await this.refresh()
         this.repetirInterval = setInterval(repetir, 10000)
 
         this.keepAliveInterval = setInterval(keepAlive, 60000 * 15)
 
         await new Promise(r => setTimeout(r, 1000))
         this.desactivarBotonEnviar()
+    }
+    async refresh() {
+        const headerRow = document.querySelector('.wx-timesheet__header')
+        const mainEl = headerRow.querySelector('#TimesheetPlus')
+        const col1 = mainEl.querySelector('#col1')
+        const col2 = mainEl.querySelector('#col2')
+        //
+        const data = await this.getDiasTrabajoMes()
+        this.renderHoy(col1, data)
+        await this.renderMesHastaHoy(col1, data)
+        await this.renderMes(col1, data)
+        await this.renderAccumulatedTimePerDay()
+        await this.restoreDiaExpandido(data)
+        this.renderMinutosMeses(col2)
+        this.renderConfiguracion(col1)
+        this.saveMinutosRestantes(data)
     }
 
     async restoreDiaExpandido(data) {
@@ -254,6 +279,25 @@ class TimesheetPlus {
 
         addButton.dispatchEvent(new Event('click', { bubbles: true }))
         await new Promise(r => setTimeout(r, 100))
+    }
+    hasStartEndEditors(dayTitle) {
+        if (dayTitle == null) {
+            dayTitle = this.getMain().querySelector(this.getSelectorHoy())
+        }
+        const day = dayTitle.parentNode
+        const startEndEditors = day.querySelectorAll('timesheet-start-end-editor')
+        if (startEndEditors.length == 1) {
+            const lastEditor = startEndEditors[startEndEditors.length - 1]
+            let inputs = lastEditor.querySelectorAll('.wx-time-input')
+            let startInput = inputs[0]
+            let endInput = inputs[1]
+            const startHoursInput = startInput.querySelector('.wx-time-input__hours')
+            const startMinutesInput = startInput.querySelector('.wx-time-input__minutes')
+            const hours = parseInt(startHoursInput.innerText)
+            const minutes = parseInt(startMinutesInput.innerText)
+            return isNaN(hours) || isNaN(minutes) ? false : true
+        }
+        return true
     }
     async eliminarTodosLosEditores(dayTitle) {
         if (dayTitle == null) {
@@ -842,9 +886,16 @@ class TimesheetPlus {
 
 
         const renderMes = (d) => {
+            const key = `restantes-${d.month}-${d.year}`
             return `
-                <div>
-                    ${this.meses[d.month - 1]} ${d.year}: <span class="${d.minutosRestantes < 0 ? 'naranja' : 'turquesa'}">${this.renderMinutos(d.minutosRestantes, true)}</span>
+                <div class="d-flex">
+                    <div>
+                        ${this.meses[d.month - 1]} ${d.year}: <span class="${d.minutosRestantes < 0 ? 'naranja' : 'turquesa'}">${this.renderMinutos(d.minutosRestantes, true)}</span>
+                    </div>
+                    <div class="flex"></div>
+                    <div class="delete rojo i fs80 pntr usn" data-key="${key}">
+                        delete
+                    </div>
                 </div>
             `
         }
@@ -853,19 +904,47 @@ class TimesheetPlus {
             minutosYear += d.minutosRestantes
         }
         mesesEl.innerHTML = `
+            <div class="d-flex ai-c jc-fe">
+                <div id="mesAuto" class="boton boton-rojo">Mes auto</div>
+            </div>
             <div style="height:10px"></div>
-                <div class="titulo1 d-flex">
-                    <div class="i">Minutos restantes total</div>
-                </div>
-                <div>
-                    Total: <span class="${minutosYear < 0 ? 'naranja' : 'turquesa'}">${this.renderMinutos(minutosYear, true)}</span>
-                </div>
-                <div class="titulo1 d-flex">
-                    <div class="i">Minutos restantes por mes</div>
-                </div>
+            <div class="titulo1 d-flex">
+                <div class="i">Minutos restantes total</div>
+            </div>
+            <div>
+                Total: <span class="${minutosYear < 0 ? 'naranja' : 'turquesa'}">${this.renderMinutos(minutosYear, true)}</span>
+            </div>
+            <div class="titulo1 d-flex">
+                <div class="i">Minutos restantes por mes</div>
+            </div>
+            <div style="height:">
                 ${dataMeses.map(d => renderMes(d)).join('')}
             </div>
             `
+        const mesAuto = mesesEl.querySelector('#mesAuto')
+        mesAuto.addEventListener('click', async () => {
+            if (confirm('Se llenarán automaticamente todos los días sin rellenar')) {
+                const dayTitles = this.getMain().querySelectorAll('.wx-timesheet-day__header-weekday')
+                for (let i = 0; i < dayTitles.length; i++) {
+                    const dayTitle = dayTitles[i]
+                    const dayIndicators = dayTitle.querySelector('.wx-timesheet-day__indicators')
+                    if (this.esDiaDeTrabajo(dayIndicators)) {
+                        this.mostrarDia(dayTitle)
+                        if (!this.hasStartEndEditors(dayTitle)) {
+                            await this.crearDiaAleatorio(dayTitle)
+
+                        }
+                    }
+                }
+            }
+        })
+        const deleteButtons = mesesEl.querySelectorAll('.delete')
+        for (let deleteButton of deleteButtons) {
+            deleteButton.addEventListener('click', async () => {
+                this.storageRemove(deleteButton.dataset.key)
+                await this.refresh()
+            })
+        }
     }
     renderConfiguracion(parent) {
         let configEl = parent.querySelector('#configuracion')
@@ -1012,6 +1091,7 @@ class TimesheetPlus {
             border-radius: 3px;
             padding: 20px;
             z-index:1000;
+            width:600px;
         }
         .acumulado-por-dia {
             position:absolute;
@@ -1021,6 +1101,9 @@ class TimesheetPlus {
 
         .pntr{
             cursor: pointer;
+        }
+        .usn{
+            user-select: none;
         }
         .boton{
             display: flex;
