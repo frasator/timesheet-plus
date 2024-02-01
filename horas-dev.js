@@ -12,7 +12,7 @@ class TimesheetPlus {
         this.minutosJornada = (7 * 60) + 45
         this.minutosMediaJornada = (4 * 60)
         setInterval(async () => {
-            const headerRow = document.querySelector('.wx-timesheet__header')
+            const headerRow = document.querySelector('.wx-timesheet__header-placeholder')
             if (headerRow != null) {
                 const left = headerRow.querySelector('#TimesheetPlus')
                 if (left == null) {
@@ -62,16 +62,11 @@ class TimesheetPlus {
         mainEl.setAttribute('id', 'TimesheetPlus')
         mainEl.classList.add('shadow1')
         mainEl.classList.add('fs110')
-        mainEl.classList.add('d-flex', 'jc-fs', 'ai-s')
 
         const col1 = document.createElement('div')
         const col2 = document.createElement('div')
         col1.setAttribute('id', 'col1')
         col2.setAttribute('id', 'col2')
-        col2.classList.add('flex')
-        col1.classList.add('flex')
-        col2.classList.add('flex')
-        col2.style.paddingLeft = "1.5em"
         mainEl.appendChild(col1)
         mainEl.appendChild(col2)
 
@@ -87,11 +82,13 @@ class TimesheetPlus {
         bar.appendChild(actualizarUltimoFinBtn)
         const autoBtn = this.crearBotonAuto()
         bar.appendChild(autoBtn)
+        const mesAutoBtn = this.crearBotonMesAuto()
+        bar.appendChild(mesAutoBtn)
 
         // const clockEl = this.createSVGClock()
         // bar.appendChild(clockEl)
 
-        const headerRow = document.querySelector('.wx-timesheet__header')
+        const headerRow = document.querySelector('.wx-timesheet__header-placeholder')
         headerRow.appendChild(mainEl)
 
         ////
@@ -112,7 +109,7 @@ class TimesheetPlus {
         this.desactivarBotonEnviar()
     }
     async refresh() {
-        const headerRow = document.querySelector('.wx-timesheet__header')
+        const headerRow = document.querySelector('.wx-timesheet__header-placeholder')
         const mainEl = headerRow.querySelector('#TimesheetPlus')
         const col1 = mainEl.querySelector('#col1')
         const col2 = mainEl.querySelector('#col2')
@@ -126,6 +123,9 @@ class TimesheetPlus {
         this.renderMinutosMeses(col2)
         this.renderConfiguracion(col1)
         this.saveMinutosRestantes(data)
+
+        const diasMainBody = document.querySelector('.wx-timesheet__main-body')
+        diasMainBody.style.marginLeft = "20px"
     }
 
     async restoreDiaExpandido(data) {
@@ -193,6 +193,33 @@ class TimesheetPlus {
         `
         button.addEventListener('click', async () => {
             await this.crearDiaAleatorio()
+        })
+        return button
+    }
+
+    crearBotonMesAuto() {
+        const button = document.createElement('div')
+        button.setAttribute('id', 'mesAuto')
+        button.style.marginRight = '5px'
+        button.classList.add('boton', 'boton-rojo2')
+        button.innerHTML = `
+                <div> Mes auto </div>
+            `
+        button.addEventListener('click', async () => {
+            if (confirm('Se llenarán automaticamente todos los días sin rellenar')) {
+                const dayTitles = this.getMain().querySelectorAll('.wx-timesheet-day__header-weekday')
+                for (let i = 0; i < dayTitles.length; i++) {
+                    const dayTitle = dayTitles[i]
+                    const dayIndicators = dayTitle.querySelector('.wx-timesheet-day__indicators')
+                    if (this.esDiaDeTrabajo(dayIndicators)) {
+                        this.mostrarDia(dayTitle)
+                        if (!this.hasStartEndEditors(dayTitle)) {
+                            await this.crearDiaAleatorio(dayTitle)
+
+                        }
+                    }
+                }
+            }
         })
         return button
     }
@@ -904,9 +931,6 @@ class TimesheetPlus {
             minutosYear += d.minutosRestantes
         }
         mesesEl.innerHTML = `
-            <div class="d-flex ai-c jc-fe">
-                <div id="mesAuto" class="boton boton-rojo">Mes auto</div>
-            </div>
             <div style="height:10px"></div>
             <div class="titulo1 d-flex">
                 <div class="i">Minutos restantes total</div>
@@ -921,23 +945,6 @@ class TimesheetPlus {
                 ${dataMeses.map(d => renderMes(d)).join('')}
             </div>
             `
-        const mesAuto = mesesEl.querySelector('#mesAuto')
-        mesAuto.addEventListener('click', async () => {
-            if (confirm('Se llenarán automaticamente todos los días sin rellenar')) {
-                const dayTitles = this.getMain().querySelectorAll('.wx-timesheet-day__header-weekday')
-                for (let i = 0; i < dayTitles.length; i++) {
-                    const dayTitle = dayTitles[i]
-                    const dayIndicators = dayTitle.querySelector('.wx-timesheet-day__indicators')
-                    if (this.esDiaDeTrabajo(dayIndicators)) {
-                        this.mostrarDia(dayTitle)
-                        if (!this.hasStartEndEditors(dayTitle)) {
-                            await this.crearDiaAleatorio(dayTitle)
-
-                        }
-                    }
-                }
-            }
-        })
         const deleteButtons = mesesEl.querySelectorAll('.delete')
         for (let deleteButton of deleteButtons) {
             deleteButton.addEventListener('click', async () => {
@@ -1084,14 +1091,16 @@ class TimesheetPlus {
 
         /**/
         #TimesheetPlus {
-            position: absolute;
-            right:15px;
-            top:60px;
+            position: fixed;
+            right:40px;
             background-color: #fafafa;
             border-radius: 3px;
             padding: 20px;
             z-index:1000;
-            width:600px;
+            height:650px;
+            margin-top:auto;
+            margin-bottom:auto;
+            overflow-y:auto;
         }
         .acumulado-por-dia {
             position:absolute;
@@ -1109,7 +1118,7 @@ class TimesheetPlus {
             display: flex;
             justify-content: center;
             align-items: center;
-            width :100px;
+            min-width :80px;
             height :25px;
             cursor :pointer;
             color :white;
@@ -1122,6 +1131,9 @@ class TimesheetPlus {
         }
         .boton-rojo{
             background-color :#CC3333;
+        }
+        .boton-rojo2{
+            background-color :#dc143c;
         }
         .boton-azul{
             background-color :#003e63;
