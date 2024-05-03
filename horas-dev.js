@@ -283,8 +283,10 @@ class TimesheetPlus {
     }
 
 
-    async saveDay() {
-        const dayTitle = this.getMain().querySelector(this.getSelectorHoy())
+    async saveDay(dayTitle) {
+        if (dayTitle == null) {
+            dayTitle = this.getMain().querySelector(this.getSelectorHoy())
+        }
         let isExpanded = dayTitle.getAttribute('aria-expanded') === 'true'
         if (isExpanded) {
             await new Promise(r => setTimeout(r, 10))
@@ -473,7 +475,7 @@ class TimesheetPlus {
             await this.setInputTime(startInput, start2Date)
             await this.setInputTime(endInput, end2Date)
 
-            await this.saveDay()
+            await this.saveDay(dayTitle)
         }
     }
 
