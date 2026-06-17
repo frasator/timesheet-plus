@@ -55,7 +55,7 @@ class TimesheetPlus {
         this.storageSet(`restantes-${month}-${year}`, { month, year, minutosRestantes })
     }
     async init() {
-        await new Promise(r => setTimeout(r, 2000))
+        await new Promise(r => setTimeout(r, 1000))
         clearInterval(this.repetirInterval)
         clearInterval(this.keepAliveInterval)
         const mainEl = document.createElement('div')
@@ -101,16 +101,22 @@ class TimesheetPlus {
             // console.log(text)
         }
         await this.refresh()
-        this.repetirInterval = setInterval(repetir, 10000)
+        this.repetirInterval = setInterval(repetir, 3000)
 
         this.keepAliveInterval = setInterval(keepAlive, 60000 * 15)
 
-        await new Promise(r => setTimeout(r, 1000))
+        await new Promise(r => setTimeout(r, 500))
         this.desactivarBotonEnviar()
     }
     async refresh() {
         const headerRow = document.querySelector('.wx-timesheet__header-placeholder')
+        if (headerRow == null){
+            return
+        }
         const mainEl = headerRow.querySelector('#TimesheetPlus')
+        if (mainEl == null){
+            return
+        }
         const col1 = mainEl.querySelector('#col1')
         const col2 = mainEl.querySelector('#col2')
         //
@@ -152,7 +158,7 @@ class TimesheetPlus {
             const dayTitle = this.getMain().querySelector(this.getSelectorHoy())
             const day = dayTitle.parentNode
             await this.addNewStartEndEditor()
-            const startEndEditors = day.querySelectorAll('timesheet-start-end-editor')
+            const startEndEditors = day.querySelectorAll('.wx-timesheet-start-end-editor')
             const lastEditor = startEndEditors[startEndEditors.length - 1]
             const inputs = lastEditor.querySelectorAll('.wx-time-input')
             const startInput = inputs[0]
@@ -302,7 +308,7 @@ class TimesheetPlus {
             dayTitle = this.getMain().querySelector(this.getSelectorHoy())
         }
         const day = dayTitle.parentNode
-        const startEndEditors = day.querySelectorAll('timesheet-start-end-editor')
+        const startEndEditors = day.querySelectorAll('.wx-timesheet-start-end-editor')
         const lastEditor = startEndEditors[startEndEditors.length - 1]
         const addButton = lastEditor.querySelector(`button[aria-label="Add"]`)
 
@@ -314,7 +320,7 @@ class TimesheetPlus {
             dayTitle = this.getMain().querySelector(this.getSelectorHoy())
         }
         const day = dayTitle.parentNode
-        const startEndEditors = day.querySelectorAll('timesheet-start-end-editor')
+        const startEndEditors = day.querySelectorAll('.wx-timesheet-start-end-editor')
         if (startEndEditors.length == 1) {
             const lastEditor = startEndEditors[startEndEditors.length - 1]
             let inputs = lastEditor.querySelectorAll('.wx-time-input')
@@ -333,7 +339,7 @@ class TimesheetPlus {
             dayTitle = this.getMain().querySelector(this.getSelectorHoy())
         }
         const day = dayTitle.parentNode
-        const startEndEditors = day.querySelectorAll('timesheet-start-end-editor')
+        const startEndEditors = day.querySelectorAll('.wx-timesheet-start-end-editor')
         for (let i = startEndEditors.length - 1; i > 0; i--) {
             const lastEditor = startEndEditors[i]
             const deleteButton = lastEditor.querySelector(`button[aria-label="Delete"]`)
@@ -392,7 +398,7 @@ class TimesheetPlus {
         this.mostrarDia()
         const dayTitle = this.getMain().querySelector(this.getSelectorHoy())
         const day = dayTitle.parentNode
-        const startEndEditors = day.querySelectorAll('timesheet-start-end-editor')
+        const startEndEditors = day.querySelectorAll('.wx-timesheet-start-end-editor')
         const lastEditor = startEndEditors[startEndEditors.length - 1]
         const inputs = lastEditor.querySelectorAll('.wx-time-input')
         // const startInput = inputs[0]
@@ -423,7 +429,7 @@ class TimesheetPlus {
             this.mostrarDia(dayTitle)
             this.eliminarTodosLosEditores(dayTitle)
             const day = dayTitle.parentNode
-            let startEndEditors = day.querySelectorAll('timesheet-start-end-editor')
+            let startEndEditors = day.querySelectorAll('.wx-timesheet-start-end-editor')
             let firstEditor = startEndEditors[0]
             let inputs = firstEditor.querySelectorAll('.wx-time-input')
             let startInput = inputs[0]
@@ -457,7 +463,7 @@ class TimesheetPlus {
 
             ////
             await this.addNewStartEndEditor(dayTitle)
-            startEndEditors = day.querySelectorAll('timesheet-start-end-editor')
+            startEndEditors = day.querySelectorAll('.wx-timesheet-start-end-editor')
             let lastEditor = startEndEditors[startEndEditors.length - 1]
             inputs = lastEditor.querySelectorAll('.wx-time-input')
             startInput = inputs[0]
@@ -492,7 +498,7 @@ class TimesheetPlus {
         const year = dateNow.getFullYear()
         const month = ('00' + (dateNow.getMonth() + 1)).slice(-2)
         const monthDay = ('00' + dateNow.getDate()).slice(-2)
-        return `timesheet-day > [id="timesheet-day-${year}-${month}-${monthDay}"]`
+        return `wx-timesheet-day > [id="timesheet-day-${year}-${month}-${monthDay}"]`
     }
     getDayTitleDate(dayTitle) {
         const auxSplit = dayTitle.getAttribute('id').split('timesheet-day-')[1].split('-')
@@ -527,7 +533,7 @@ class TimesheetPlus {
     }
     async getTiempoTrabajadoMes() {
         const main = this.getMain()
-        const allDays = main.querySelectorAll("timesheet-day")
+        const allDays = main.querySelectorAll("wx-timesheet-day")
         let accumulatedMin = 0
         for (let i = 0; i < allDays.length; i++) {
             const day = allDays[i]
@@ -628,11 +634,12 @@ class TimesheetPlus {
         }
     }
     esDiaDeTrabajo(dayIndicators) {
-        if (dayIndicators.children.length > 0) {
-            for (let i = 0; i < dayIndicators.children.length; i++) {
-                const child = dayIndicators.children[i]
-                for (let j = 0; j < child.classList.length; j++) {
-                    const clase = child.classList[j]
+        if (dayIndicators != null && dayIndicators.children.length > 0) {
+            const descendientes = dayIndicators.querySelectorAll('*')
+            for (let i = 0; i < descendientes.length; i++) {
+                const descendiente = descendientes[i]
+                for (let j = 0; j < descendiente.classList.length; j++) {
+                    const clase = descendiente.classList[j]
                     for (let k = 0; k < this.indicadoresNoTrabajo.length; k++) {
                         const indicador = this.indicadoresNoTrabajo[k]
                         if (clase.indexOf(indicador) != -1) {
@@ -653,11 +660,12 @@ class TimesheetPlus {
     async esDiaDe(tipoDeDia, dayTitle) {
         const dayIndicators = dayTitle.querySelector('.wx-timesheet-day__indicators')
         let foundComment = false
-        if (dayIndicators.children.length > 0) {
-            for (let i = 0; i < dayIndicators.children.length; i++) {
-                const child = dayIndicators.children[i]
-                for (let j = 0; j < child.classList.length; j++) {
-                    const clase = child.classList[j]
+        if (dayIndicators != null && dayIndicators.children.length > 0) {
+            const descendientes = dayIndicators.querySelectorAll('*')
+            for (let i = 0; i < descendientes.length; i++) {
+                const descendiente = descendientes[i]
+                for (let j = 0; j < descendiente.classList.length; j++) {
+                    const clase = descendiente.classList[j]
                     if (clase.indexOf('indicator-self-comment') != -1) {
                         foundComment = true
                         break
@@ -697,7 +705,7 @@ class TimesheetPlus {
 
     async renderAccumulatedTimePerDay() {
         const main = this.getMain()
-        const allDays = main.querySelectorAll("timesheet-day")
+        const allDays = main.querySelectorAll("wx-timesheet-day")
         let accumulatedMin = 0
         for (let i = 0; i < allDays.length; i++) {
             const day = allDays[i]
