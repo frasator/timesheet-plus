@@ -680,6 +680,7 @@ class TimesheetPlus {
             let isExpanded = dayTitle.getAttribute('aria-expanded') === 'true'
             if (!isExpanded) {
                 dayTitle.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+                await new Promise(r => setTimeout(r, 200))
             }
             let els1 = Array.from(dayTitle.parentNode.querySelectorAll('textarea'))
             let els2 = Array.from(dayTitle.parentNode.querySelectorAll('.wx-comment__body'))
@@ -691,6 +692,7 @@ class TimesheetPlus {
             })
             if (!isExpanded) {
                 dayTitle.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+                await new Promise(r => setTimeout(r, 200))
             }
             if (els1.length > 0 || els2.length > 0) {
                 return true
