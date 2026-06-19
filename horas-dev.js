@@ -11,6 +11,8 @@ class TimesheetPlus {
         this.meses = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"]
         this.minutosJornada = (7 * 60) + 45
         this.minutosMediaJornada = (4 * 60)
+        this.cacheTiposDia = {} // Cache para evitar abrir/cerrar días constantemente
+        this.refreshCount = 0 // Contador para limpiar caché periódicamente
         setInterval(async () => {
             const headerRow = document.querySelector('.wx-timesheet__header-placeholder')
             if (headerRow != null) {
@@ -117,6 +119,14 @@ class TimesheetPlus {
         if (mainEl == null){
             return
         }
+        
+        // Limpiar caché cada 20 refreshes (~60 segundos) para evitar datos obsoletos
+        this.refreshCount++
+        if (this.refreshCount >= 20) {
+            this.cacheTiposDia = {}
+            this.refreshCount = 0
+        }
+        
         const col1 = mainEl.querySelector('#col1')
         const col2 = mainEl.querySelector('#col2')
         //
@@ -658,6 +668,14 @@ class TimesheetPlus {
         return await this.esDiaDe('guardia', dayTitle)
     }
     async esDiaDe(tipoDeDia, dayTitle) {
+        const dayId = dayTitle.getAttribute('id')
+        const cacheKey = `${dayId}-${tipoDeDia}`
+        
+        // Verificar si ya tenemos el resultado en caché
+        if (this.cacheTiposDia[cacheKey] !== undefined) {
+            return this.cacheTiposDia[cacheKey]
+        }
+        
         const dayIndicators = dayTitle.querySelector('.wx-timesheet-day__indicators')
         let foundComment = false
         if (dayIndicators != null && dayIndicators.children.length > 0) {
@@ -676,6 +694,8 @@ class TimesheetPlus {
                 }
             }
         }
+        
+        let resultado = false
         if (foundComment === true) {
             let isExpanded = dayTitle.getAttribute('aria-expanded') === 'true'
             if (!isExpanded) {
@@ -695,10 +715,13 @@ class TimesheetPlus {
                 await new Promise(r => setTimeout(r, 200))
             }
             if (els1.length > 0 || els2.length > 0) {
-                return true
+                resultado = true
             }
         }
-        return false
+        
+        // Guardar en caché
+        this.cacheTiposDia[cacheKey] = resultado
+        return resultado
     }
     esFinde(dayTitle) {
         const cls = dayTitle.getAttribute('class')
