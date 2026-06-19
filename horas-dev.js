@@ -697,8 +697,10 @@ class TimesheetPlus {
         
         let resultado = false
         if (foundComment === true) {
-            let isExpanded = dayTitle.getAttribute('aria-expanded') === 'true'
-            if (!isExpanded) {
+            // Recordar el estado inicial para no cerrar un día que ya estaba abierto
+            let wasExpandedInitially = dayTitle.getAttribute('aria-expanded') === 'true'
+            
+            if (!wasExpandedInitially) {
                 dayTitle.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
                 await new Promise(r => setTimeout(r, 200))
             }
@@ -710,10 +712,13 @@ class TimesheetPlus {
             els2 = els2.filter(el => {
                 return el.innerHTML.trim().toLowerCase().indexOf(tipoDeDia) != -1
             })
-            if (!isExpanded) {
+            
+            // Solo cerrar si nosotros lo abrimos (no estaba abierto inicialmente)
+            if (!wasExpandedInitially) {
                 dayTitle.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
                 await new Promise(r => setTimeout(r, 200))
             }
+            
             if (els1.length > 0 || els2.length > 0) {
                 resultado = true
             }
