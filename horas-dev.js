@@ -1,393 +1,1280 @@
+/**
+ * TimesheetPlus - Componente que complementa el timesheet original
+ * 
+ * Responsabilidades:
+ * 1. DOM Exploration: Extrae información del timesheet original de la página
+ * 2. Panel Rendering: Renderiza un panel lateral con información adicional y controles
+ * 
+ * Organización:
+ * - Lifecycle: constructor, init, render, refresh
+ * - DOM Queries: Métodos que extraen datos del DOM original
+ * - Data Processing: Métodos que procesan y calculan datos
+ * - Render Methods: Métodos que retornan HTML templates
+ * - User Actions: Handlers de acciones del usuario
+ * - Storage: Persistencia en localStorage
+ * - Utilities: Funciones auxiliares
+ */
 class TimesheetPlus {
+    // ============================================================================
+    // LIFECYCLE - Ciclo de vida del componente
+    // ============================================================================
+
     constructor() {
-        this.addStyle()
-        this.indicadoresNoTrabajo = [
-            'indicator-holiday',
-            'indicator-vacation-pending',
-            'indicator-vacation-approved',
-            'indicator-absence-pending',
-            'indicator-absence-approved',
-        ]
-        this.meses = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"]
-        this.minutosJornada = (7 * 60) + 45
-        this.minutosMediaJornada = (4 * 60)
-        this.cacheTiposDia = {} // Cache para evitar abrir/cerrar días constantemente
-        this.refreshCount = 0 // Contador para limpiar caché periódicamente
-        setInterval(async () => {
-            const headerRow = document.querySelector('.wx-timesheet__header-placeholder')
-            if (headerRow != null) {
-                const left = headerRow.querySelector('#TimesheetPlus')
-                if (left == null) {
-                    await this.init()
-                }
+        // Aplicar estilos estáticos
+        this.aplicarEstilos()
+
+        // Crear elemento raíz del componente usando TimesheetPlus.html()
+        this.element = TimesheetPlus.html`<div id="TimesheetPlus" class="shadow1 fs110"></div>`
+
+        // Constantes de tiempo
+        this.TIEMPO_ESPERA_DOM = 1000
+        this.INTERVALO_ACTUALIZACION = 5000
+        this.INTERVALO_KEEP_ALIVE = 60000 * 15
+        this.INTERVALO_BUSCAR_CONTAINER = 4000
+        this.DELAY_ESPERA_CORTO = 100
+        this.DELAY_ESPERA_CLICK = 20
+        this.DELAY_GUARDAR = 10
+        this.DURACION_ENTRADA_INICIAL = 5 * 60000
+        this.OFFSET_SCROLL_DIA = 110
+
+        // Selectores CSS del timesheet original
+        this.SELECTORES = {
+            titulosDias: '.wx-timesheet-day__header-weekday',
+            todosDias: 'wx-timesheet-day',
+            tituloDia: '[class^="wx-timesheet-day"]',
+            resumenDia: '.wx-timesheet-day__summary',
+            indicadoresDia: '.wx-timesheet-day__indicators',
+            editoresInicioFin: '.wx-timesheet-start-end-editor',
+            inputTiempo: '.wx-time-input',
+            inputHoras: '.wx-time-input__hours',
+            inputMinutos: '.wx-time-input__minutes',
+            flechaArriba: '.wx-time-input__up-arrow',
+            areasTexto: 'textarea',
+            comentarios: '.wx-comment__body',
+            botonEnviar: '#timesheet-action-button-submit',
+            botonAgregar: 'button[aria-label="Add"]',
+            botonEliminar: 'button[aria-label="Delete"]'
+        }
+
+        // Configuración del componente
+        this.config = {
+            indicadoresNoTrabajo: [
+                'indicator-holiday',
+                'indicator-vacation-pending',
+                'indicator-vacation-approved',
+                'indicator-absence-pending',
+                'indicator-absence-approved',
+            ],
+            meses: ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"],
+            minutosJornada: 7 * 60 + 45,
+            minutosMediaJornada: 4 * 60
+        }
+
+        // Estado reactivo del componente
+        this.estado = {
+            inicializado: false,
+            datos: null,              // Datos del mes (días laborables, etc.)
+            tiempoTrabajadoMes: null // Tiempo total trabajado en el mes
+        }
+
+        // Cache temporal para evitar releer el mismo día en una pasada
+        this.cache = {
+            tiposDia: {}            // Cache temporal de tipos de día (se limpia cada pasada)
+        }
+
+        // Intervalos de actualización
+        this.intervalos = {
+            intentarInit: null,
+            actualizar: null,
+            mantenerVivo: null
+        }
+
+        // Inicializar cuando el DOM esté listo
+        this.iniciarCuandoEsteListaLaPagina()
+    }
+
+    /**
+     * Aplica los estilos estáticos del componente al documento
+     */
+    aplicarEstilos() {
+        const idEstilo = 'timesheetplus-styles'
+
+        // Evitar duplicar estilos
+        if (document.getElementById(idEstilo)) return
+
+        const estilo = document.createElement('style')
+        estilo.id = idEstilo
+        estilo.textContent = this.constructor.styles
+        document.head.appendChild(estilo)
+    }
+
+    /**
+     * Espera a que el contenedor del timesheet original esté disponible
+     * y luego inicializa el componente
+     */
+    iniciarCuandoEsteListaLaPagina() {
+        const intentarInit = async () => {
+            const filaEncabezado = document.querySelector('.wx-timesheet__header-placeholder')
+            if (filaEncabezado && !document.getElementById('TimesheetPlus')) {
+                console.log('[TimesheetPlus] Contenedor encontrado, insertando elemento')
+                filaEncabezado.appendChild(this.element)
+                await this.inicializar()
             }
-        }, 4000)
-    }
-    storageSet(key, value) {
-        if (value != null) {
-            localStorage.setItem(`timesheetplus-${key}`, JSON.stringify(value))
         }
+
+        intentarInit()
+        this.intervalos.intentarInit = setInterval(intentarInit, this.INTERVALO_BUSCAR_CONTAINER)
     }
-    storageGet(key) {
-        return JSON.parse(localStorage.getItem(`timesheetplus-${key}`))
-    }
-    storageRemove(key) {
-        localStorage.removeItem(`timesheetplus-${key}`)
-    }
-    getMain() {
-        return document.querySelector('.wx-timesheet__main-body')
-    }
-    getSheetDate() {
-        const dayTitle = document.querySelector('[id^="timesheet-day"]')
-        const auxSplit = dayTitle.getAttribute('id').split('timesheet-day-')[1].split('-')
-        const dtYear = parseInt(auxSplit[0])
-        const dtMonth = parseInt(auxSplit[1])
-        return { month: dtMonth, year: dtYear }
-    }
-    async saveMinutosRestantes(dat) {
-        const t = await this.getTiempoTrabajadoMes()
-        const mj = this.minutosJornada
-        const mmj = this.minutosMediaJornada
 
-        const minutosATrabajar = (mj * dat.total) + (mmj * dat.totalMedios)
-        const minutosRestantes = (t.horas * 60 + t.minutos) - (minutosATrabajar)
+    /**
+     * Inicializa el componente una vez insertado en el DOM
+     */
+    async inicializar() {
+        await new Promise(r => setTimeout(r, this.TIEMPO_ESPERA_DOM))
 
-        const { month, year } = this.getSheetDate()
+        // Limpiar intervalos anteriores
+        clearInterval(this.intervalos.actualizar)
+        clearInterval(this.intervalos.mantenerVivo)
 
-        this.storageSet(`restantes-${month}-${year}`, { month, year, minutosRestantes })
-    }
-    async init() {
-        await new Promise(r => setTimeout(r, 1000))
-        clearInterval(this.repetirInterval)
-        clearInterval(this.keepAliveInterval)
-        const mainEl = document.createElement('div')
-        mainEl.setAttribute('id', 'TimesheetPlus')
-        mainEl.classList.add('shadow1')
-        mainEl.classList.add('fs110')
+        // Marcar como inicializado
+        this.estado.inicializado = true
 
-        const col1 = document.createElement('div')
-        const col2 = document.createElement('div')
-        col1.setAttribute('id', 'col1')
-        col2.setAttribute('id', 'col2')
-        mainEl.appendChild(col1)
-        mainEl.appendChild(col2)
+        // Renderizar estructura inicial
+        await this.renderizar()
 
+        // Configurar actualización automática cada 3 segundos
+        this.intervalos.actualizar = setInterval(async () => {
+            await this.actualizar()
+        }, this.INTERVALO_ACTUALIZACION)
 
+        // Mantener sesión activa (cada 15 minutos)
+        this.intervalos.mantenerVivo = setInterval(async () => {
+            await fetch(window.location.href)
+        }, this.INTERVALO_KEEP_ALIVE)
 
-        const bar = document.createElement('div')
-        bar.classList.add('d-flex', 'ai-c', 'jc-c')
-        col1.appendChild(bar)
+        // Primera actualización de datos
+        await this.actualizar()
 
-        const nuevoIntervalo = this.crearBotonInicio()
-        bar.appendChild(nuevoIntervalo)
-        const actualizarUltimoFinBtn = this.crearBotonFin()
-        bar.appendChild(actualizarUltimoFinBtn)
-        const autoBtn = this.crearBotonAuto()
-        bar.appendChild(autoBtn)
-        const mesAutoBtn = this.crearBotonMesAuto()
-        bar.appendChild(mesAutoBtn)
-
-        // const clockEl = this.createSVGClock()
-        // bar.appendChild(clockEl)
-
-        const headerRow = document.querySelector('.wx-timesheet__header-placeholder')
-        headerRow.appendChild(mainEl)
-
-        ////
-        const repetir = async () => {
-            await this.refresh()
-        }
-        const keepAlive = async () => {
-            const res = await fetch(window.location.href)
-            // const text = await res.text()
-            // console.log(text)
-        }
-        await this.refresh()
-        this.repetirInterval = setInterval(repetir, 3000)
-
-        this.keepAliveInterval = setInterval(keepAlive, 60000 * 15)
-
-        await new Promise(r => setTimeout(r, 500))
+        // Ocultar botón de enviar por defecto
+        await new Promise(r => setTimeout(r, this.DELAY_ESPERA_CORTO))
         this.desactivarBotonEnviar()
     }
-    async refresh() {
-        const headerRow = document.querySelector('.wx-timesheet__header-placeholder')
-        if (headerRow == null){
-            return
-        }
-        const mainEl = headerRow.querySelector('#TimesheetPlus')
-        if (mainEl == null){
-            return
-        }
-        
-        // Limpiar caché cada 20 refreshes (~60 segundos) para evitar datos obsoletos
-        this.refreshCount++
-        if (this.refreshCount >= 20) {
-            this.cacheTiposDia = {}
-            this.refreshCount = 0
-        }
-        
-        const col1 = mainEl.querySelector('#col1')
-        const col2 = mainEl.querySelector('#col2')
-        //
-        const data = await this.getDiasTrabajoMes()
-        this.renderHoy(col1, data)
-        await this.renderMesHastaHoy(col1, data)
-        await this.renderMes(col1, data)
-        await this.renderAccumulatedTimePerDay()
-        await this.restoreDiaExpandido(data)
-        this.renderMinutosMeses(col2)
-        this.renderConfiguracion(col1)
-        this.saveMinutosRestantes(data)
 
-        const diasMainBody = document.querySelector('.wx-timesheet__main-body')
-        diasMainBody.style.marginLeft = "20px"
+    /**
+     * Renderiza el componente completo (método principal estilo Lit)
+     */
+    async renderizar() {
+        const datos = this.estado.datos
+        const tiempoMes = this.estado.tiempoTrabajadoMes
+
+        // Mostrar solo botones mientras no hay datos (cargando o error)
+        if (!datos || !tiempoMes) {
+            const contenido = TimesheetPlus.html`
+                <div class="timesheet-plus-container">
+                    <div id="col1">
+                        <div class="d-flex ai-c jc-c">
+                            ${this.renderBotonInicio()}
+                            ${this.renderBotonFin()}
+                            ${this.renderBotonAuto()}
+                            ${this.renderBotonMesAuto()}
+                        </div>
+                    </div>
+                    <div id="col2"></div>
+                </div>
+            `
+            this.element.replaceChildren(...contenido.children)
+            return
+        }
+
+        // Obtener secciones del panel
+        const hoyHTML = this.renderHoyHTML(datos)
+        const mesHastaHoyHTML = this.renderMesHastaHoyHTML(datos, tiempoMes)
+        const mesHTML = this.renderMesHTML(datos, tiempoMes)
+        const configuracionHTML = this.renderConfiguracionHTML()
+        const minutosMesesHTML = this.renderMinutosMesesHTML()
+
+        // Renderizar estructura completa
+        const contenido = TimesheetPlus.html`
+            <div class="timesheet-plus-container">
+                <div id="col1">
+                    <div class="d-flex ai-c jc-c">
+                        ${this.renderBotonInicio()}
+                        ${this.renderBotonFin()}
+                        ${this.renderBotonAuto()}
+                        ${this.renderBotonMesAuto()}
+                    </div>
+                    ${hoyHTML}
+                    ${mesHastaHoyHTML}
+                    ${mesHTML}
+                    ${configuracionHTML}
+                </div>
+                <div id="col2">
+                    ${minutosMesesHTML}
+                </div>
+            </div>
+        `
+
+        // Actualizar DOM
+        this.element.replaceChildren(...contenido.children)
     }
 
-    async restoreDiaExpandido(data) {
-        // Restaurar expandido actual
-        if (data.diaExpandido != null) {
-            document.body.scrollTo(0, data.diaExpandido.position)
-            let isExpanded = data.diaExpandido.elem.getAttribute('aria-expanded') === 'true'
-            if (!isExpanded) {
-                data.diaExpandido.elem.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+    /**
+     * Actualiza los datos y re-renderiza el componente
+     */
+    async actualizar() {
+        if (!this.estado.inicializado) return
+
+        try {
+            // Actualizar datos del estado
+            this.estado.datos = await this.obtenerDiasTrabajadosMes()
+            this.estado.tiempoTrabajadoMes = await this.obtenerTiempoTrabajadoMes()
+
+            // Re-renderizar componente
+            await this.renderizar()
+
+            // Operaciones adicionales en DOM externo
+            await this.renderizarTiempoAcumuladoPorDia()
+            await this.restaurarDiaExpandido(this.estado.datos)
+            this.guardarMinutosRestantes(this.estado.datos)
+
+            // Ajustar margen del timesheet original
+            const diasMainBody = this.obtenerMain()
+            if (diasMainBody) {
+                diasMainBody.style.marginLeft = "20px"
+            }
+        } catch (error) {
+            console.error('[TimesheetPlus] Error en actualizar:', error)
+        }
+    }
+
+    // ============================================================================
+    // DOM QUERIES - Extracción de información del DOM original
+    // ============================================================================
+
+    /**
+     * Obtiene el contenedor principal del timesheet
+     */
+    obtenerMain() {
+        return document.querySelector('.wx-timesheet__main-body')
+    }
+
+    /**
+     * Obtiene la fecha del timesheet actual (ano y mes)
+     */
+    obtenerFechaHoja() {
+        const tituloDia = document.querySelector('[id^="timesheet-day"]')
+        const partes = tituloDia.getAttribute('id').split('timesheet-day-')[1].split('-')
+        const ano = parseInt(partes[0])
+        const mes = parseInt(partes[1])
+        return { month: mes, year: ano }
+    }
+
+    /**
+     * Genera el selector CSS para el día de hoy
+     */
+    getSelectorHoy() {
+        const fechaActual = new Date()
+        const ano = fechaActual.getFullYear()
+        const mes = String(fechaActual.getMonth() + 1).padStart(2, '0')
+        const diaMes = String(fechaActual.getDate()).padStart(2, '0')
+        return `wx-timesheet-day > [id="timesheet-day-${ano}-${mes}-${diaMes}"]`
+    }
+
+    /**
+     * Obtiene el elemento del día de hoy (método auxiliar para evitar repetición)
+     */
+    obtenerDiaHoy() {
+        return this.obtenerMain().querySelector(this.getSelectorHoy())
+    }
+
+    /**
+     * Obtiene la fecha de un día específico del timesheet
+     */
+    obtenerFechaDia(tituloDia) {
+        const partes = tituloDia.getAttribute('id').split('timesheet-day-')[1].split('-')
+        const ano = parseInt(partes[0])
+        const mes = parseInt(partes[1]) - 1
+        const dia = parseInt(partes[2])
+        return new Date(ano, mes, dia, 0, 0, 1)
+    }
+
+    /**
+     * Obtiene el tiempo trabajado hoy
+     */
+    obtenerTiempoTrabajadoHoy() {
+        let horas = 0, minutos = 0
+        const tituloDia = this.obtenerDiaHoy()
+
+        if (tituloDia) {
+            const resumenDia = tituloDia.querySelector(this.SELECTORES.resumenDia)
+            const texto = resumenDia.innerText.trim()
+            if (texto) {
+                const partes = texto.split('h')
+                horas = parseInt(partes[0].trim())
+                minutos = parseInt(partes[1].trim().split('m')[0].trim())
+            }
+        }
+
+        return {
+            horas,
+            minutos,
+            totalMinutos: horas * 60 + minutos
+        }
+    }
+
+    /**
+     * Obtiene el tiempo total trabajado en el mes (excluyendo días de guardia)
+     */
+    async obtenerTiempoTrabajadoMes() {
+        const todosDias = this.obtenerMain().querySelectorAll(this.SELECTORES.todosDias)
+        let minutosAcumulados = 0
+
+        // Deshabilitar interacción del usuario mientras leemos comentarios
+        const estilosOriginales = this.deshabilitarInteraccionUsuario()
+
+        for (const contenedorDia of todosDias) {
+            const tituloDia = contenedorDia.querySelector(this.SELECTORES.tituloDia)
+            const esDiaDeGuardia = await this.esDiaDeGuardia(tituloDia)
+
+            if (!esDiaDeGuardia) {
+                const resumenDia = contenedorDia.querySelector(this.SELECTORES.resumenDia)
+                const texto = resumenDia.innerText.trim()
+
+                if (texto) {
+                    const [horasStr, minutosStr] = texto.split('h')
+                    const horas = parseInt(horasStr.trim())
+                    const minutos = parseInt(minutosStr.trim().split('m')[0].trim())
+                    minutosAcumulados += horas * 60 + minutos
+                }
+            }
+        }
+
+        // Restaurar interacción del usuario
+        this.restaurarInteraccionUsuario(estilosOriginales)
+
+        return {
+            horas: Math.floor(minutosAcumulados / 60),
+            minutos: minutosAcumulados % 60,
+            totalMinutos: minutosAcumulados
+        }
+    }
+
+    // ============================================================================
+    // DATA PROCESSING - Procesamiento y cálculo de datos
+    // ============================================================================
+
+    /**
+     * Obtiene información completa de los días laborables del mes
+     */
+    async obtenerDiasTrabajadosMes() {
+        const titulosDias = this.obtenerMain().querySelectorAll(this.SELECTORES.titulosDias)
+        let tituloHoy = this.obtenerDiaHoy()
+
+        if (tituloHoy === null) {
+            // Si hoy no existe, asumir que el mes ya pasó y usar el último día
+            tituloHoy = titulosDias[titulosDias.length - 1]
+        }
+
+        let contadorDias = 0
+        let contadorNoTrabajo = 0
+        let contadorMediosDias = 0
+        let posicionHoy = 0
+        let minutosATrabajar = 0
+        let minutosATrabajarHastaHoy = 0
+
+        // Deshabilitar interacción del usuario mientras leemos comentarios
+        const estilosOriginales = this.deshabilitarInteraccionUsuario()
+
+        // Guardar día expandido actual para restaurarlo al final
+        const posicionScroll = document.body.scrollTop
+        const diaExpandido = Array.from(titulosDias).find(tituloDia =>
+            this.estaExpandido(tituloDia)
+        )
+        const datosDiaExpandido = diaExpandido ? { position: posicionScroll, elem: diaExpandido } : null
+
+        // Limpiar caché temporal al inicio de cada pasada
+        this.cache.tiposDia = {}
+
+        // Clasificar días del mes
+        const diasTrabajo = []
+        for (const tituloDia of titulosDias) {
+            const indicadoresDia = tituloDia.querySelector(this.SELECTORES.indicadoresDia)
+            const esMedioDiaDeTrabajo = await this.esMedioDiaDeTrabajo(tituloDia)
+
+            if (esMedioDiaDeTrabajo) {
+                contadorMediosDias++
+                minutosATrabajar += this.config.minutosMediaJornada
+                diasTrabajo.push({ tituloDia, esMedio: true })
+            } else if (this.esDiaDeTrabajo(indicadoresDia)) {
+                contadorDias++
+                minutosATrabajar += this.config.minutosJornada
+                diasTrabajo.push({ tituloDia, esMedio: false })
+            } else {
+                contadorNoTrabajo++
+            }
+        }
+
+        // Calcular días hasta hoy
+        let enterosHastaHoy = 0
+        let mediosHastaHoy = 0
+        const ahora = new Date()
+
+        for (const { tituloDia, esMedio } of diasTrabajo) {
+            const fechaDia = this.obtenerFechaDia(tituloDia)
+            const mismoMes = fechaDia.getMonth() === ahora.getMonth()
+            const antesHoy = fechaDia <= ahora
+
+            if (!mismoMes || antesHoy) {
+                posicionHoy++
+                if (esMedio) {
+                    minutosATrabajarHastaHoy += this.config.minutosMediaJornada
+                    mediosHastaHoy++
+                } else {
+                    minutosATrabajarHastaHoy += this.config.minutosJornada
+                    enterosHastaHoy++
+                }
+            }
+        }
+
+        // Restaurar interacción del usuario
+        this.restaurarInteraccionUsuario(estilosOriginales)
+
+        return {
+            posicionHoy,
+            notrabajo: contadorNoTrabajo,
+            total: contadorDias,
+            totalMedios: contadorMediosDias,
+            minutosATrabajar,
+            minutosATrabajarHastaHoy,
+            diasTrabajo,
+            enterosHastaHoy,
+            mediosHastaHoy,
+            diaExpandido: datosDiaExpandido
+        }
+    }
+
+    /**
+     * Verifica si un día es laborable (no es festivo, vacaciones, etc.)
+     */
+    esDiaDeTrabajo(indicadoresDia) {
+        if (!indicadoresDia || indicadoresDia.children.length === 0) {
+            return true
+        }
+
+        const descendientes = indicadoresDia.querySelectorAll('*')
+        return !Array.from(descendientes).some(descendiente =>
+            Array.from(descendiente.classList).some(clase =>
+                this.config.indicadoresNoTrabajo.some(indicador =>
+                    clase.includes(indicador)
+                )
+            )
+        )
+    }
+
+    /**
+     * Verifica si un día es medio día de trabajo
+     */
+    async esMedioDiaDeTrabajo(tituloDia) {
+        return this.esDiaDe('medio', tituloDia)
+    }
+
+    /**
+     * Verifica si un día es de guardia
+     */
+    async esDiaDeGuardia(tituloDia) {
+        return this.esDiaDe('guardia', tituloDia)
+    }
+
+    /**
+     * Verifica si un día es de un tipo específico (medio día, guardia, etc.)
+     * buscando en los comentarios del día
+     */
+    async esDiaDe(tipoDeDia, tituloDia) {
+        const idDia = tituloDia.getAttribute('id')
+        const claveCache = `${idDia}-${tipoDeDia}`
+
+        // Verificar caché
+        if (this.cache.tiposDia[claveCache] !== undefined) {
+            return this.cache.tiposDia[claveCache]
+        }
+
+        const indicadoresDia = tituloDia.querySelector(this.SELECTORES.indicadoresDia)
+        if (!indicadoresDia || indicadoresDia.children.length === 0) {
+            this.cache.tiposDia[claveCache] = false
+            return false
+        }
+
+        // Buscar indicador de comentario
+        const tieneComentario = Array.from(indicadoresDia.querySelectorAll('*')).some(el =>
+            Array.from(el.classList).some(clase => clase.includes('indicator-self-comment'))
+        )
+
+        if (!tieneComentario) {
+            this.cache.tiposDia[claveCache] = false
+            return false
+        }
+
+        // Abrir día temporalmente solo si está cerrado
+        const estabaExpandidoInicialmente = this.estaExpandido(tituloDia)
+
+        if (!estabaExpandidoInicialmente) {
+            tituloDia.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+            await new Promise(r => setTimeout(r, this.DELAY_ESPERA_CORTO))
+        }
+        
+        // Buscar el tipo de día en comentarios
+        const areasTexto = Array.from(tituloDia.parentNode.querySelectorAll(this.SELECTORES.areasTexto))
+        const comentarios = Array.from(tituloDia.parentNode.querySelectorAll(this.SELECTORES.comentarios))
+
+        const resultado = areasTexto.some(el => el.value.toLowerCase().includes(tipoDeDia)) ||
+                          comentarios.some(el => el.textContent.trim().toLowerCase().includes(tipoDeDia))
+
+        // Cerrar día solo si nosotros lo abrimos
+        if (!estabaExpandidoInicialmente) {
+            tituloDia.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+            await new Promise(r => setTimeout(r, this.DELAY_ESPERA_CORTO))
+        }
+
+        // Guardar en caché
+        this.cache.tiposDia[claveCache] = resultado
+        return resultado
+    }
+
+    /**
+     * Verifica si un día está expandido
+     */
+    estaExpandido(tituloDia) {
+        return tituloDia.getAttribute('aria-expanded') === 'true'
+    }
+
+    /**
+     * Verifica si un día es fin de semana
+     */
+    esFinde(tituloDia) {
+        return tituloDia.classList.contains('weekend')
+    }
+
+    /**
+     * Restaura el día expandido después de actualizar
+     */
+    async restaurarDiaExpandido(datos) {
+        if (datos.diaExpandido) {
+            document.body.scrollTo(0, datos.diaExpandido.position)
+            const estaExpandido = this.estaExpandido(datos.diaExpandido.elem)
+
+            if (!estaExpandido) {
+                datos.diaExpandido.elem.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
             }
         }
     }
 
-    crearBotonInicio() {
-        const button = document.createElement('div')
-        button.setAttribute('id', 'botonInicio')
-        button.style.marginRight = '5px'
-        button.classList.add('boton', 'boton-azul')
-        button.innerHTML = `
-            <div> Inicio </div>
-        `
-        button.addEventListener('click', async () => {
+    /**
+     * Renderiza tiempo acumulado por día en el timesheet original
+     */
+    async renderizarTiempoAcumuladoPorDia() {
+        const todosDias = this.obtenerMain().querySelectorAll(this.SELECTORES.todosDias)
+        let minutosAcumulados = 0
+
+        // Deshabilitar interacción del usuario mientras leemos comentarios
+        const estilosOriginales = this.deshabilitarInteraccionUsuario()
+
+        for (const contenedorDia of todosDias) {
+            const tituloDia = contenedorDia.querySelector(this.SELECTORES.tituloDia)
+            const esMedio = await this.esMedioDiaDeTrabajo(tituloDia)
+
+            const minutosJornada = this.esFinde(tituloDia) ? 0 :
+                (esMedio ? this.config.minutosMediaJornada : this.config.minutosJornada)
+
+            const resumenDia = contenedorDia.querySelector(this.SELECTORES.resumenDia)
+            const texto = resumenDia.innerText.trim()
+            const id = tituloDia.getAttribute("id")
+            const accumuladoId = `${id}-acumulado`
+
+            const elementoAcumulado = tituloDia.querySelector(`#${accumuladoId}`)
+
+            if (texto) {
+                const [horasStr, minutosStr] = texto.split('h')
+                const minutos = parseInt(horasStr.trim()) * 60 + parseInt(minutosStr.trim().split('m')[0].trim())
+                const esDiaDeGuardia = await this.esDiaDeGuardia(tituloDia)
+
+                if (!esDiaDeGuardia) {
+                    const diferenciaMinutos = minutos - minutosJornada
+                    minutosAcumulados += diferenciaMinutos
+
+                    if (minutos > 0) {
+                        const colorDiferenciaMin = diferenciaMinutos < 0 ? "naranja" : "turquesa"
+                        const colorAcumuladoMin = minutosAcumulados < 0 ? "naranja" : "turquesa"
+
+                        const nuevoElemento = TimesheetPlus.html`<div id="${accumuladoId}" class="acumulado-por-dia fs60">
+                            <span class="gris">Día: </span>
+                            <span class="${colorDiferenciaMin}" title="Horas trabajadas de más en el dia.">
+                                ${this.renderMinutos(diferenciaMinutos, true)}
+                            </span>
+                            &nbsp;&nbsp;
+                            <span class="gris">Mes: </span>
+                            <span class="${colorAcumuladoMin}" title="Horas acumuladas en el mes hasta fecha.">
+                                ${this.renderMinutos(minutosAcumulados, true)}
+                            </span>
+                        </div>`
+
+                        if (elementoAcumulado) {
+                            elementoAcumulado.replaceWith(nuevoElemento)
+                        } else {
+                            tituloDia.appendChild(nuevoElemento)
+                        }
+                    } else if (elementoAcumulado) {
+                        elementoAcumulado.remove()
+                    }
+                } else if (elementoAcumulado) {
+                    elementoAcumulado.remove()
+                }
+            } else if (elementoAcumulado) {
+                elementoAcumulado.remove()
+            }
+        }
+
+        // Restaurar interacción del usuario
+        this.restaurarInteraccionUsuario(estilosOriginales)
+    }
+
+    // ============================================================================
+    // RENDER METHODS - Templates HTML del panel
+    // ============================================================================
+    renderHoyHTML(datos) {
+        const textoAyuda = 'Abrir hoy'
+        const tiempoHoy = this.obtenerTiempoTrabajadoHoy()
+        const datosHoy = datos.diasTrabajo[datos.posicionHoy - 1]
+        const minutosJornadaHoy = datosHoy?.esMedio ? this.config.minutosMediaJornada : this.config.minutosJornada
+
+        const handleMostrarHoy = () => {
             this.mostrarDia()
-            const dayTitle = this.getMain().querySelector(this.getSelectorHoy())
-            const day = dayTitle.parentNode
-            await this.addNewStartEndEditor()
-            const startEndEditors = day.querySelectorAll('.wx-timesheet-start-end-editor')
-            const lastEditor = startEndEditors[startEndEditors.length - 1]
-            const inputs = lastEditor.querySelectorAll('.wx-time-input')
-            const startInput = inputs[0]
-            const endInput = inputs[1]
-            const now = new Date()
-            const startDate = this.adjustClockinTime(now, true)
-            const endDate = new Date(startDate.getTime() + 5 * 60000)
+        }
 
-            await this.setInputTime(startInput, startDate)
-            await this.setInputTime(endInput, endDate)
-            await this.saveDay()
-        })
-        return button
-    }
-
-    crearBotonFin() {
-        const button = document.createElement('div')
-        button.setAttribute('id', 'botonFin')
-        button.style.marginRight = '5px'
-        button.classList.add('boton', 'boton-rojo')
-        button.innerHTML = `
-            <div> Fin </div>
+        return TimesheetPlus.html`
+            <div id="hoy">
+                <div style="height:10px"></div>
+                <div class="titulo1 d-flex">
+                    <div class="i">Hoy</div>
+                    <div class="flex"></div>
+                    <div class="pntr azul" title="${textoAyuda}" @click=${handleMostrarHoy}>&#x27A1; &nbsp;</div>
+                </div>
+                <div class="contenido1">
+                    <span class="verde b"> ${tiempoHoy.horas}h ${tiempoHoy.minutos}m  </span>
+                    <span class=""> de </span>
+                    <span class="b"> ${this.renderMinutos(minutosJornadaHoy)} </span>
+                </div>
+            </div>
         `
-        button.addEventListener('click', async () => {
-            await this.actualizarUltimaHora()
-            await this.saveDay()
-        })
-        return button
     }
 
-    crearBotonAuto() {
-        const button = document.createElement('div')
-        button.setAttribute('id', 'botonAuto')
-        button.style.marginRight = '5px'
-        button.classList.add('boton', 'boton-azul2')
-        button.innerHTML = `
-            <div> Auto </div>
+    renderMesHastaHoyHTML(datos, tiempoMes) {
+        const { minutosJornada, minutosMediaJornada } = this.config
+        const minutosRestantes = tiempoMes.totalMinutos - datos.minutosATrabajarHastaHoy
+        const colorRestantes = minutosRestantes < 0 ? 'naranja' : 'turquesa'
+        const textoRestantes = minutosRestantes < 0 ? 'restantes' : 'de más'
+
+        return TimesheetPlus.html`
+            <div id="meshoy">
+                <div style="height:10px"></div>
+                <div class="titulo1 d-flex jc-sb">
+                    <div class="i">Este mes hasta hoy</div>
+                </div>
+                <div class="contenido1">
+                    <div class=" ">
+                        <span class="b morado"> ${datos.posicionHoy}º día </span> de
+                        <span class="b"> ${datos.total + datos.totalMedios} </span> días laborables
+                    </div>
+                    <div class=" ">
+                        <span class="verde b"> ${this.renderMinutos(tiempoMes.totalMinutos)}</span>
+                        <span class=""> de </span>
+                        <span class="b"> ${this.renderMinutos(datos.minutosATrabajarHastaHoy)}</span>
+                        <span class="gris fs80">
+                            ${datos.enterosHastaHoy} x ${this.renderMinutos(minutosJornada)} +
+                            ${datos.mediosHastaHoy} x ${this.renderMinutos(minutosMediaJornada)}
+                        </span>
+                    </div>
+                    <div class=" ">
+                        <span class="${colorRestantes} b"> ${this.renderMinutos(minutosRestantes, true)}</span> ${textoRestantes}
+                    </div>
+                </div>
+                <div style="height:5px"></div>
+                <div class="titulo1 d-flex jc-sb">
+                    <div class="i">Hora de salida hoy</div>
+                </div>
+                <div class="contenido1">
+                    ${this.obtenerHoraSalidaHoy(-minutosRestantes)}
+                </div>
+            </div>
         `
-        button.addEventListener('click', async () => {
-            await this.crearDiaAleatorio()
-        })
-        return button
     }
 
-    crearBotonMesAuto() {
-        const button = document.createElement('div')
-        button.setAttribute('id', 'mesAuto')
-        button.style.marginRight = '5px'
-        button.classList.add('boton', 'boton-rojo2')
-        button.innerHTML = `
-                <div> Mes auto </div>
+    renderMesHTML(datos, tiempoMes) {
+        const { minutosJornada, minutosMediaJornada } = this.config
+        const minutosATrabajar = minutosJornada * datos.total + minutosMediaJornada * datos.totalMedios
+        const minutosRestantes = tiempoMes.horas * 60 + tiempoMes.minutos - minutosATrabajar
+        const colorRestantes = minutosRestantes < 0 ? 'naranja' : 'turquesa'
+        const textoRestantes = minutosRestantes < 0 ? 'restantes' : 'de más'
+        const textoBotonEnviar = 'Mostrar/Ocultar botón de enviar'
+
+        const handleAlternarBoton = () => {
+            this.alternarBotonEnviar()
+        }
+
+        return TimesheetPlus.html`
+            <div id="mes">
+                <div style="height:10px"></div>
+                <div class="titulo1 d-flex jc-sb">
+                    <div class="i">Este mes</div>
+                    <div class="pntr azul" title="${textoBotonEnviar}" @click=${handleAlternarBoton}>&#9993; &nbsp;</div>
+                </div>
+                <div class="contenido1">
+                    <div class=" ">
+                        <span class="b rojo"> ${datos.notrabajo} </span> días no laborables
+                        <br>
+                        <span class="b"> ${datos.totalMedios} </span> &#189; días laborables
+                        <br>
+                        <span class="b"> ${datos.total} </span> días laborables
+                    </div>
+                    <div class=" ">
+                        <span class="verde b"> ${this.renderMinutos(tiempoMes.horas * 60 + tiempoMes.minutos)}</span>
+                        <span class=""> de </span>
+                        <span class="b"> ${this.renderMinutos(minutosATrabajar)}</span>
+                        <span class="gris fs80">
+                            ${datos.total} x ${this.renderMinutos(minutosJornada)} +
+                            ${datos.totalMedios} x ${this.renderMinutos(minutosMediaJornada)}
+                        </span>
+                    </div>
+                    <div class=" ">
+                        <span class="${colorRestantes} b"> ${this.renderMinutos(minutosRestantes, true)}</span> ${textoRestantes}
+                    </div>
+                </div>
+            </div>
+        `
+    }
+
+    renderConfiguracionHTML() {
+        const inicio = parseInt(this.storageGet('hora-inicio')) || 8
+        const comida = parseInt(this.storageGet('hora-comida')) || 14
+        const duracionComida = parseInt(this.storageGet('duracion-comida')) || 20
+        const textoBotonAleatorio = "Registrar tiempos aleatoriamente en el actual día expandido"
+
+        const handleAleatorio = async () => {
+            const titulosDias = this.obtenerMain().querySelectorAll(this.SELECTORES.titulosDias)
+            const diaExpandido = Array.from(titulosDias).find(
+                tituloDia => this.estaExpandido(tituloDia)
+            )
+            if (diaExpandido) {
+                await this.renderDiaAleatorio(diaExpandido)
+            }
+        }
+
+        const handleHoraInicio = (e) => {
+            this.storageSet('hora-inicio', e.target.value)
+        }
+
+        const handleHoraComida = (e) => {
+            this.storageSet('hora-comida', e.target.value)
+        }
+
+        const handleMinutosComida = (e) => {
+            this.storageSet('duracion-comida', e.target.value)
+        }
+
+        return TimesheetPlus.html`
+            <div id="configuracion">
+                <div style="height:10px"></div>
+                <div class="titulo1 d-flex">
+                    <div class="i">Configuración día aleatorio</div>
+                    <div class="flex"></div>
+                    <div class="pntr azul" title="${textoBotonAleatorio}" @click=${handleAleatorio}>&#9860; &nbsp;</div>
+                </div>
+                <div class="contenido1">
+                    <div class="d-flex ai-c">
+                        <div class="gris" style="width:9em">&#9857; Hora inicio</div>
+                        <div class="flex">
+                            <input class="texto" type="number" value="${inicio}" placeholder="8" @change=${handleHoraInicio}>
+                        </div>
+                    </div>
+                    <div class="d-flex ai-c">
+                        <div class="gris" style="width:9em">&#9859; Hora comida</div>
+                        <div class="flex">
+                            <input class="texto" type="number" value="${comida}" placeholder="14" @change=${handleHoraComida}>
+                        </div>
+                    </div>
+                    <div class="d-flex ai-c">
+                        <div class="gris" style="width:9em">&#9858; Minutos comida</div>
+                        <div class="flex">
+                            <input class="texto" type="number" value="${duracionComida}" placeholder="20" @change=${handleMinutosComida}>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `
+    }
+
+    renderMinutosMesesHTML() {
+        const claves = Object.keys(localStorage)
+        const dataMeses = claves.filter(k => k.startsWith('timesheetplus-restantes'))
+            .map(k => k.replace('timesheetplus-', ''))
+            .map(k => this.storageGet(k))
+        dataMeses.sort((a, b) => a.month - b.month)
+
+        // Renderizar cada mes con eventos
+        const renderMesElement = (datosMes) => {
+            const clave = `restantes-${datosMes.month}-${datosMes.year}`
+            
+            const handleEliminar = async () => {
+                this.storageRemove(clave)
+                await this.actualizar()
+            }
+            
+            return TimesheetPlus.html`
+                <div class="d-flex">
+                    <div>
+                        ${this.config.meses[datosMes.month - 1]} ${datosMes.year}: 
+                        <span class="${datosMes.minutosRestantes < 0 ? 'naranja' : 'turquesa'}">
+                            ${this.renderMinutos(datosMes.minutosRestantes, true)}
+                        </span>
+                    </div>
+                    <div class="flex"></div>
+                    <div 
+                        class="delete rojo i fs80 pntr usn" 
+                        @click=${handleEliminar}
+                    >
+                        delete
+                    </div>
+                </div>
             `
-        button.addEventListener('click', async () => {
-            if (confirm('Se llenarán automaticamente todos los días sin rellenar')) {
-                const dayTitles = this.getMain().querySelectorAll('.wx-timesheet-day__header-weekday')
-                for (let i = 0; i < dayTitles.length; i++) {
-                    const dayTitle = dayTitles[i]
-                    const dayIndicators = dayTitle.querySelector('.wx-timesheet-day__indicators')
-                    if (this.esDiaDeTrabajo(dayIndicators)) {
-                        this.mostrarDia(dayTitle)
-                        if (!this.hasStartEndEditors(dayTitle)) {
-                            await this.crearDiaAleatorio(dayTitle)
+        }
 
+        const minutosAno = dataMeses.reduce((acc, m) => acc + m.minutosRestantes, 0)
+
+        // Generar array de elementos para cada mes
+        const elementosMeses = dataMeses.map(renderMesElement)
+
+        return TimesheetPlus.html`
+            <div id="minutosMeses">
+                <div style="height:10px"></div>
+                <div class="titulo1 d-flex">
+                    <div class="i">Minutos restantes total</div>
+                </div>
+                <div>
+                    Total: <span class="${minutosAno < 0 ? 'naranja' : 'turquesa'}">
+                        ${this.renderMinutos(minutosAno, true)}
+                    </span>
+                </div>
+                <div class="titulo1 d-flex">
+                    <div class="i">Minutos restantes por mes</div>
+                </div>
+                <div>
+                    ${elementosMeses}
+                </div>
+            </div>
+        `
+    }
+
+    renderBotonInicio() {
+        const handleClick = async () => {
+            this.mostrarDia()
+            const tituloDia = this.obtenerDiaHoy()
+            const contenedorDia = tituloDia.parentNode
+            await this.agregarNuevoEditorInicioFin()
+            const editoresInicioFin = contenedorDia.querySelectorAll(this.SELECTORES.editoresInicioFin)
+            const ultimoEditor = editoresInicioFin[editoresInicioFin.length - 1]
+            const entradas = ultimoEditor.querySelectorAll(this.SELECTORES.inputTiempo)
+            const entradaInicio = entradas[0]
+            const entradaFin = entradas[1]
+            const ahora = new Date()
+            const fechaInicio = this.ajustarHoraFichaje(ahora, true)
+            const fechaFin = new Date(fechaInicio.getTime() + this.DURACION_ENTRADA_INICIAL)
+
+            await this.establecerHoraInput(entradaInicio, fechaInicio)
+            await this.establecerHoraInput(entradaFin, fechaFin)
+            await this.guardarDia()
+        }
+
+        return TimesheetPlus.html`
+            <div 
+                id="botonInicio" 
+                class="boton boton-azul" 
+                style="margin-right: 5px"
+                @click=${handleClick}
+            >
+                <div>Inicio</div>
+            </div>
+        `
+    }
+
+    renderBotonFin() {
+        const handleClick = async () => {
+            await this.actualizarUltimaHora()
+            await this.guardarDia()
+        }
+
+        return TimesheetPlus.html`
+            <div 
+                id="botonFin" 
+                class="boton boton-rojo" 
+                style="margin-right: 5px"
+                @click=${handleClick}
+            >
+                <div>Fin</div>
+            </div>
+        `
+    }
+
+    renderBotonAuto() {
+        const handleClick = async () => {
+            await this.renderDiaAleatorio()
+        }
+
+        return TimesheetPlus.html`
+            <div 
+                id="botonAuto" 
+                class="boton boton-azul2" 
+                style="margin-right: 5px"
+                @click=${handleClick}
+            >
+                <div>Auto</div>
+            </div>
+        `
+    }
+
+    renderBotonMesAuto() {
+        const handleClick = async () => {
+            if (confirm('Se llenarán automaticamente todos los días sin rellenar')) {
+                const titulosDias = this.obtenerMain().querySelectorAll(this.SELECTORES.titulosDias)
+                for (const tituloDia of titulosDias) {
+                    const indicadoresDia = tituloDia.querySelector(this.SELECTORES.indicadoresDia)
+                    if (this.esDiaDeTrabajo(indicadoresDia)) {
+                        this.mostrarDia(tituloDia)
+                        if (!this.tieneEditoresInicioFin(tituloDia)) {
+                            await this.renderDiaAleatorio(tituloDia)
                         }
                     }
                 }
             }
-        })
-        return button
-    }
-
-    async setInputTime(timeInput, now) {
-        const hours = now.getHours()
-        const minutes = now.getMinutes()
-
-        const startHoursInput = timeInput.querySelector('.wx-time-input__hours')
-        const startMinutesInput = timeInput.querySelector('.wx-time-input__minutes')
-
-        const upStartArrow = timeInput.querySelector('.wx-time-input__up-arrow')
-        const downStartArrow = timeInput.querySelector('.wx-time-input__down-arrow')
-
-        startHoursInput.dispatchEvent(new Event('focus', { bubbles: true }))
-        await new Promise(r => setTimeout(r, 100))
-        startHoursInput.dispatchEvent(new Event('click', { bubbles: true }))
-        await new Promise(r => setTimeout(r, 100))
-
-        while (true) {
-            let current = startHoursInput.innerText
-            if (parseInt(current) === parseInt(hours)) {
-                break
-            } else {
-                upStartArrow.dispatchEvent(new Event('click', { bubbles: true }))
-                await new Promise(r => setTimeout(r, 20))
-            }
         }
 
-        startMinutesInput.dispatchEvent(new Event('focus', { bubbles: true }))
-        await new Promise(r => setTimeout(r, 100))
-        startMinutesInput.dispatchEvent(new Event('click', { bubbles: true }))
-        await new Promise(r => setTimeout(r, 100))
-
-
-        while (true) {
-            let current = startMinutesInput.innerText
-            if (parseInt(current) === parseInt(minutes)) {
-                break
-            } else {
-                upStartArrow.dispatchEvent(new Event('click', { bubbles: true }))
-                await new Promise(r => setTimeout(r, 20))
-            }
-        }
+        return TimesheetPlus.html`
+            <div 
+                id="mesAuto" 
+                class="boton boton-rojo2" 
+                style="margin-right: 5px"
+                @click=${handleClick}
+            >
+            <div>Mes auto</div>
+            </div>
+        `
     }
 
-    getInputValue(timeInput, date) {
-        const startHoursInput = timeInput.querySelector('.wx-time-input__hours')
-        const startMinutesInput = timeInput.querySelector('.wx-time-input__minutes')
-        const hours = parseInt(startHoursInput.innerText)
-        const minutes = parseInt(startMinutesInput.innerText)
 
-        if (!isNaN(hours) && !isNaN(minutes)) {
-            date = new Date(date)
-            date.setHours(hours)
-            date.setMinutes(minutes)
+    /**
+     * Renderiza horas en formato "Xh Ym"
+     */
+    renderMinutos(minutos, usarSigno = false) {
+        const signo = usarSigno ? (minutos >= 0 ? '+' : '-') : ''
+        const horas = Math.abs(Math.trunc(minutos / 60))
+        const minutosRestantes = Math.abs(minutos % 60)
+        return `${signo} ${horas}h ${minutosRestantes}m`
+    }
+
+    /**
+     * Calcula y renderiza hora de salida recomendada para hoy
+     */
+    obtenerHoraSalidaHoy(minutos) {
+        const ahora = new Date()
+        ahora.setTime(ahora.getTime() + minutos * 60000)
+        const horas = String(ahora.getHours()).padStart(2, '0')
+        const minutosFormateados = String(ahora.getMinutes()).padStart(2, '0')
+        return `${horas}:${minutosFormateados}`
+    }
+
+    /**
+     * Ajusta el tiempo de fichaje al múltiplo de 5 minutos más cercano
+     */
+    ajustarHoraFichaje(fecha, esEntrada = true) {
+        fecha = new Date(fecha)
+
+        const redondear = esEntrada ? Math.floor : Math.ceil
+        const nuevosMinutos = redondear(fecha.getMinutes() / 5) * 5
+
+        if (nuevosMinutos === 60) {
+            fecha.setHours(fecha.getHours() + 1)
+            fecha.setMinutes(0)
         } else {
-            date = null
+            fecha.setMinutes(nuevosMinutos)
         }
-        return { hours: hours, minutes: minutes, date: date }
+
+        return fecha
     }
 
+    /**
+     * Guarda los minutos restantes del mes en localStorage
+     */
+    guardarMinutosRestantes(datos) {
+        const tiempoMes = this.estado.tiempoTrabajadoMes
+        const { minutosJornada, minutosMediaJornada } = this.config
 
-    async saveDay(dayTitle) {
-        if (dayTitle == null) {
-            dayTitle = this.getMain().querySelector(this.getSelectorHoy())
-        }
-        let isExpanded = dayTitle.getAttribute('aria-expanded') === 'true'
-        if (isExpanded) {
-            await new Promise(r => setTimeout(r, 10))
-            dayTitle.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
-        }
-        await new Promise(r => setTimeout(r, 10))
-        dayTitle.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
-        await new Promise(r => setTimeout(r, 10))
+        const minutosATrabajar = minutosJornada * datos.total + minutosMediaJornada * datos.totalMedios
+        const minutosRestantes = tiempoMes.totalMinutos - minutosATrabajar
+
+        const { month, year } = this.obtenerFechaHoja()
+        this.storageSet(`restantes-${month}-${year}`, { month, year, minutosRestantes })
     }
 
-    async addNewStartEndEditor(dayTitle) {
-        if (dayTitle == null) {
-            dayTitle = this.getMain().querySelector(this.getSelectorHoy())
+    /**
+     * Deshabilita la interacción del usuario (userSelect y pointerEvents)
+     * @returns {Object} Estilos originales para poder restaurarlos después
+     */
+    deshabilitarInteraccionUsuario() {
+        const contenedorTimesheet = this.obtenerMain()
+        const estilosOriginales = {
+            userSelect: contenedorTimesheet.style.userSelect,
+            pointerEvents: contenedorTimesheet.style.pointerEvents
         }
-        const day = dayTitle.parentNode
-        const startEndEditors = day.querySelectorAll('.wx-timesheet-start-end-editor')
-        const lastEditor = startEndEditors[startEndEditors.length - 1]
-        const addButton = lastEditor.querySelector(`button[aria-label="Add"]`)
-
-        addButton.dispatchEvent(new Event('click', { bubbles: true }))
-        await new Promise(r => setTimeout(r, 100))
+        contenedorTimesheet.style.userSelect = 'none'
+        contenedorTimesheet.style.pointerEvents = 'none'
+        return estilosOriginales
     }
-    hasStartEndEditors(dayTitle) {
-        if (dayTitle == null) {
-            dayTitle = this.getMain().querySelector(this.getSelectorHoy())
+
+    /**
+     * Restaura la interacción del usuario (userSelect y pointerEvents)
+     * @param {Object} estilosOriginales - Estilos originales a restaurar
+     */
+    restaurarInteraccionUsuario(estilosOriginales) {
+        const contenedorTimesheet = this.obtenerMain()
+        contenedorTimesheet.style.userSelect = estilosOriginales.userSelect
+        contenedorTimesheet.style.pointerEvents = estilosOriginales.pointerEvents
+    }
+
+    // ============================================================================
+    // USER ACTIONS - Handlers de acciones del usuario
+    // ============================================================================
+
+    /**
+     * Actualiza la hora de fin del último registro al momento actual
+     */
+    async actualizarUltimaHora() {
+        this.mostrarDia()
+        const tituloDia = this.obtenerDiaHoy()
+        const contenedorDia = tituloDia.parentNode
+        const editoresInicioFin = contenedorDia.querySelectorAll(this.SELECTORES.editoresInicioFin)
+        const ultimoEditor = editoresInicioFin[editoresInicioFin.length - 1]
+        const entradas = ultimoEditor.querySelectorAll(this.SELECTORES.inputTiempo)
+        const entradaFin = entradas[1]
+        const fechaFin = this.ajustarHoraFichaje(Date.now(), false)
+        await this.establecerHoraInput(entradaFin, fechaFin)
+        this.guardarDia()
+    }
+
+    /**
+     * Muestra (scroll + expand) un día específico del timesheet
+     */
+    mostrarDia(tituloDia) {
+        tituloDia = tituloDia ?? this.obtenerDiaHoy()
+        
+        if (tituloDia) {
+            const contenedorDia = tituloDia.parentNode
+            const rectDia = contenedorDia.getBoundingClientRect()
+            document.body.scrollTo(0, rectDia.top + document.body.scrollTop - this.OFFSET_SCROLL_DIA)
+            const estaExpandido = this.estaExpandido(tituloDia)
+            if (!estaExpandido) {
+                tituloDia.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+            }
         }
-        const day = dayTitle.parentNode
-        const startEndEditors = day.querySelectorAll('.wx-timesheet-start-end-editor')
-        if (startEndEditors.length == 1) {
-            const lastEditor = startEndEditors[startEndEditors.length - 1]
-            let inputs = lastEditor.querySelectorAll('.wx-time-input')
-            let startInput = inputs[0]
-            let endInput = inputs[1]
-            const startHoursInput = startInput.querySelector('.wx-time-input__hours')
-            const startMinutesInput = startInput.querySelector('.wx-time-input__minutes')
-            const hours = parseInt(startHoursInput.innerText)
-            const minutes = parseInt(startMinutesInput.innerText)
-            return isNaN(hours) || isNaN(minutes) ? false : true
+    }
+
+    /**
+     * Rellena un día con tiempos aleatorios basados en configuración
+     */
+    async renderDiaAleatorio(tituloDia) {
+        tituloDia = tituloDia ?? this.obtenerDiaHoy()
+        
+        if (tituloDia) {
+            this.mostrarDia(tituloDia)
+            await this.eliminarTodosLosEditores(tituloDia)
+            const contenedorDia = tituloDia.parentNode
+            let editoresInicioFin = contenedorDia.querySelectorAll(this.SELECTORES.editoresInicioFin)
+            const primerEditor = editoresInicioFin[0]
+            let entradas = primerEditor.querySelectorAll(this.SELECTORES.inputTiempo)
+            let entradaInicio = entradas[0]
+            let entradaFin = entradas[1]
+
+            const inicio1 = new Date()
+
+            // Obtener configuración de horarios
+            const inicio = parseInt(this.storageGet('hora-inicio')) || 8
+            const comida = parseInt(this.storageGet('hora-comida')) || 14
+            const duracionComida = parseInt(this.storageGet('duracion-comida')) || 20
+
+            // Primera entrada (mañana)
+            const minutoInicio = this.enteroAleatorio(0, 15)
+            inicio1.setHours(inicio)
+            inicio1.setMinutes(minutoInicio)
+
+            const minutosHastaComida = (comida - inicio) * 60
+            const minutosTrabajadosManana = this.enteroAleatorio(this.enteroAleatorio(minutosHastaComida - 30, minutosHastaComida), this.enteroAleatorio(minutosHastaComida, minutosHastaComida + 30))
+            const fin1 = new Date(inicio1.getTime() + (minutosTrabajadosManana * 60000))
+
+            const fechaInicio1 = this.ajustarHoraFichaje(inicio1, false)
+            const fechaFin1 = this.ajustarHoraFichaje(fin1, false)
+
+            await this.establecerHoraInput(entradaInicio, fechaInicio1)
+            await this.establecerHoraInput(entradaFin, fechaFin1)
+
+            // Segunda entrada (tarde)
+            await this.agregarNuevoEditorInicioFin(tituloDia)
+            editoresInicioFin = contenedorDia.querySelectorAll(this.SELECTORES.editoresInicioFin)
+            const ultimoEditor = editoresInicioFin[editoresInicioFin.length - 1]
+            entradas = ultimoEditor.querySelectorAll(this.SELECTORES.inputTiempo)
+            entradaInicio = entradas[0]
+            entradaFin = entradas[1]
+
+            const duracionComidaAleatoria = this.enteroAleatorio(duracionComida - 5, duracionComida + 5)
+            const inicio2 = new Date(fin1.getTime() + (duracionComidaAleatoria * 60000))
+            const minutosTarde = this.config.minutosJornada - minutosTrabajadosManana
+            const fin2 = new Date(inicio2.getTime() + ((minutosTarde + this.enteroAleatorio(-5, 10)) * 60000))
+
+            const fechaInicio2 = this.ajustarHoraFichaje(inicio2, false)
+            const fechaFin2 = this.ajustarHoraFichaje(fin2, false)
+
+            await this.establecerHoraInput(entradaInicio, fechaInicio2)
+            await this.establecerHoraInput(entradaFin, fechaFin2)
+
+            await this.guardarDia(tituloDia)
+        }
+    }
+
+    /**
+     * Establece el tiempo en un input de tiempo del timesheet
+     */
+    async establecerHoraInput(entradaTiempo, ahora) {
+        const horas = ahora.getHours()
+        const minutos = ahora.getMinutes()
+
+        const entradaHoras = entradaTiempo.querySelector(this.SELECTORES.inputHoras)
+        const entradaMinutos = entradaTiempo.querySelector(this.SELECTORES.inputMinutos)
+        
+        const flechaArriba = entradaTiempo.querySelector(this.SELECTORES.flechaArriba)
+        
+        entradaHoras.dispatchEvent(new Event('focus', { bubbles: true }))
+        await new Promise(r => setTimeout(r, this.DELAY_ESPERA_CORTO))
+        entradaHoras.dispatchEvent(new Event('click', { bubbles: true }))
+        await new Promise(r => setTimeout(r, this.DELAY_ESPERA_CORTO))
+        
+        while (true) {
+            const actual = entradaHoras.innerText
+            if (parseInt(actual) === horas) {
+                break
+            } else {
+                flechaArriba.dispatchEvent(new Event('click', { bubbles: true }))
+                await new Promise(r => setTimeout(r, this.DELAY_ESPERA_CLICK))
+            }
+        }
+        
+        entradaMinutos.dispatchEvent(new Event('focus', { bubbles: true }))
+        await new Promise(r => setTimeout(r, this.DELAY_ESPERA_CORTO))
+        entradaMinutos.dispatchEvent(new Event('click', { bubbles: true }))
+        await new Promise(r => setTimeout(r, this.DELAY_ESPERA_CORTO))
+        
+        while (true) {
+            const actual = entradaMinutos.innerText
+            if (parseInt(actual) === minutos) {
+                break
+            } else {
+                flechaArriba.dispatchEvent(new Event('click', { bubbles: true }))
+                await new Promise(r => setTimeout(r, this.DELAY_ESPERA_CLICK))
+            }
+        }
+    }
+
+    /**
+     * Guarda un día (colapsar y expandir para forzar guardado)
+     */
+    async guardarDia(tituloDia) {
+        tituloDia = tituloDia ?? this.obtenerDiaHoy()
+        
+        const estaExpandido = this.estaExpandido(tituloDia)
+        if (estaExpandido) {
+            await new Promise(r => setTimeout(r, this.DELAY_GUARDAR))
+            tituloDia.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+        }
+        await new Promise(r => setTimeout(r, this.DELAY_GUARDAR))
+        tituloDia.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+        await new Promise(r => setTimeout(r, this.DELAY_GUARDAR))
+    }
+
+    /**
+     * Añade un nuevo editor de hora inicio-fin a un día
+     */
+    async agregarNuevoEditorInicioFin(tituloDia) {
+        tituloDia = tituloDia ?? this.obtenerDiaHoy()
+        
+        const contenedorDia = tituloDia.parentNode
+        const editoresInicioFin = contenedorDia.querySelectorAll(this.SELECTORES.editoresInicioFin)
+        const ultimoEditor = editoresInicioFin[editoresInicioFin.length - 1]
+        const botonAgregar = ultimoEditor.querySelector(this.SELECTORES.botonAgregar)
+        
+        botonAgregar.dispatchEvent(new Event('click', { bubbles: true }))
+        await new Promise(r => setTimeout(r, this.DELAY_ESPERA_CORTO))
+    }
+
+    /**
+     * Verifica si un día tiene editores de hora inicio-fin con datos
+     */
+    tieneEditoresInicioFin(tituloDia) {
+        tituloDia = tituloDia ?? this.obtenerDiaHoy()
+        
+        const contenedorDia = tituloDia.parentNode
+        const editoresInicioFin = contenedorDia.querySelectorAll(this.SELECTORES.editoresInicioFin)
+        if (editoresInicioFin.length === 1) {
+            const ultimoEditor = editoresInicioFin[editoresInicioFin.length - 1]
+            const entradas = ultimoEditor.querySelectorAll(this.SELECTORES.inputTiempo)
+            const entradaInicio = entradas[0]
+            const entradaHoras = entradaInicio.querySelector(this.SELECTORES.inputHoras)
+            const entradaMinutos = entradaInicio.querySelector(this.SELECTORES.inputMinutos)
+            const horas = parseInt(entradaHoras.innerText)
+            const minutos = parseInt(entradaMinutos.innerText)
+            return !isNaN(horas) && !isNaN(minutos)
         }
         return true
     }
-    async eliminarTodosLosEditores(dayTitle) {
-        if (dayTitle == null) {
-            dayTitle = this.getMain().querySelector(this.getSelectorHoy())
-        }
-        const day = dayTitle.parentNode
-        const startEndEditors = day.querySelectorAll('.wx-timesheet-start-end-editor')
-        for (let i = startEndEditors.length - 1; i > 0; i--) {
-            const lastEditor = startEndEditors[i]
-            const deleteButton = lastEditor.querySelector(`button[aria-label="Delete"]`)
-            deleteButton.dispatchEvent(new Event('click', { bubbles: true }))
-            await new Promise(r => setTimeout(r, 100))
+
+    /**
+     * Elimina todos los editores de hora excepto el primero
+     */
+    async eliminarTodosLosEditores(tituloDia) {
+        tituloDia = tituloDia ?? this.obtenerDiaHoy()
+        
+        const contenedorDia = tituloDia.parentNode
+        const editoresInicioFin = Array.from(contenedorDia.querySelectorAll(this.SELECTORES.editoresInicioFin))
+        
+        // Eliminar desde el último hasta el segundo (índice 1), dejando el primero (índice 0)
+        for (let i = editoresInicioFin.length - 1; i > 0; i--) {
+            const botonEliminar = editoresInicioFin[i].querySelector(this.SELECTORES.botonEliminar)
+            botonEliminar.dispatchEvent(new Event('click', { bubbles: true }))
+            await new Promise(r => setTimeout(r, this.DELAY_ESPERA_CORTO))
         }
     }
 
-    adjustClockinTime(date, is_clockin = true) {
-        date = new Date(date)
-
-        let new_minutes
-        if (is_clockin) {
-            // date.getTime() + minutes*60000
-            new_minutes = Math.floor(date.getMinutes() / 5) * 5
-        } else {
-            new_minutes = Math.ceil(date.getMinutes() / 5) * 5
-        }
-
-        if (new_minutes == 60) {
-            date.setHours(date.getHours() + 1)
-            date.setMinutes(0)
-        } else {
-            date.setMinutes(new_minutes)
-        }
-
-        return date
-    }
+    /**
+     * Oculta el botón de enviar del timesheet original
+     */
     desactivarBotonEnviar() {
-        const botonEnviar = document.querySelector('#timesheet-action-button-submit')
-        if (botonEnviar != null) {
+        const botonEnviar = document.querySelector(this.SELECTORES.botonEnviar)
+        if (botonEnviar) {
             botonEnviar.style.pointerEvents = 'none'
             botonEnviar.style.display = 'none'
         }
     }
+
+    /**
+     * Alterna la visibilidad del botón de enviar
+     */
     alternarBotonEnviar() {
-        const botonEnviar = document.querySelector('#timesheet-action-button-submit')
-        if (botonEnviar != null) {
+        const botonEnviar = document.querySelector(this.SELECTORES.botonEnviar)
+        if (botonEnviar) {
             if (botonEnviar.style.display === 'none') {
                 botonEnviar.style.pointerEvents = ''
                 botonEnviar.style.display = ''
@@ -397,710 +1284,170 @@ class TimesheetPlus {
             }
         }
     }
-    ////////////////////////////
-    ////////////////////////////
-    ////////////////////////////
-    ////////////////////////////
-    ////////////////////////////
-    ////////////////////////////
-    ////////////////////////////
-    async actualizarUltimaHora() {
-        this.mostrarDia()
-        const dayTitle = this.getMain().querySelector(this.getSelectorHoy())
-        const day = dayTitle.parentNode
-        const startEndEditors = day.querySelectorAll('.wx-timesheet-start-end-editor')
-        const lastEditor = startEndEditors[startEndEditors.length - 1]
-        const inputs = lastEditor.querySelectorAll('.wx-time-input')
-        // const startInput = inputs[0]
-        const endInput = inputs[1]
-        const endDate = this.adjustClockinTime(Date.now(), false)
-        await this.setInputTime(endInput, endDate)
-        this.saveDay()
-    }
-    mostrarDia(dayTitle) {
-        if (dayTitle == null) {
-            dayTitle = this.getMain().querySelector(this.getSelectorHoy())
+
+    // ============================================================================
+    // STORAGE - Persistencia en localStorage
+    // ============================================================================
+
+    /**
+     * Guarda un valor en localStorage con prefijo timesheetplus-
+     */
+    storageSet(key, value) {
+        if (value != null) {
+            localStorage.setItem(`timesheetplus-${key}`, JSON.stringify(value))
         }
-        if (dayTitle != null) {
-            const day = dayTitle.parentNode
-            const dayRect = day.getBoundingClientRect()
-            document.body.scrollTo(0, dayRect.top + document.body.scrollTop - 110)
-            let isExpanded = dayTitle.getAttribute('aria-expanded') === 'true'
-            if (!isExpanded) {
-                dayTitle.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+    }
+
+    /**
+     * Obtiene un valor de localStorage
+     */
+    storageGet(key) {
+        return JSON.parse(localStorage.getItem(`timesheetplus-${key}`))
+    }
+
+    /**
+     * Elimina un valor de localStorage
+     */
+    storageRemove(key) {
+        localStorage.removeItem(`timesheetplus-${key}`)
+    }
+
+    // ============================================================================
+    // UTILITIES - Funciones auxiliares
+    // ============================================================================
+
+    /**
+     * Genera un número aleatorio entre min y max (incluidos)
+     */
+    enteroAleatorio(min, max) {
+        return Math.floor(Math.random() * (max - min + 1) + min)
+    }
+
+    // ============================================================================
+    // TEMPLATE HELPERS - Funciones auxiliares para templates
+    // ============================================================================
+
+    /**
+     * Helper para template literals de CSS (estilo Lit)
+     */
+    static css(strings, ...values) {
+        return strings.reduce((result, str, i) => {
+            return result + str + (values[i] || '')
+        }, '')
+    }
+
+    /**
+     * Helper para template literals de HTML (estilo Lit)
+     */
+    static html(strings, ...values) {
+        // Combinar strings y values
+        const htmlString = strings.reduce((result, str, i) => {
+            const valor = values[i]
+            let valorProcesado = ''
+
+            // Si el valor es una función, guardarlo para procesamiento posterior
+            if (typeof valor === 'function') {
+                const handlerId = `__handler_${i}__`
+                valorProcesado = handlerId
+            } else if (valor instanceof Element) {
+                // Marcar elementos DOM para inserción posterior
+                const elementId = `__element_${i}__`
+                valorProcesado = `<span data-element-placeholder="${elementId}"></span>`
+            } else if (Array.isArray(valor)) {
+                // Soportar arrays de elementos (para listas dinámicas)
+                const arrayId = `__array_${i}__`
+                valorProcesado = `<span data-array-placeholder="${arrayId}"></span>`
+            } else if (valor != null) {
+                valorProcesado = valor
             }
-        }
-    }
-    async crearDiaAleatorio(dayTitle) {
-        if (dayTitle == null) {
-            dayTitle = this.getMain().querySelector(this.getSelectorHoy())
-        }
-        if (dayTitle != null) {
-            this.mostrarDia(dayTitle)
-            this.eliminarTodosLosEditores(dayTitle)
-            const day = dayTitle.parentNode
-            let startEndEditors = day.querySelectorAll('.wx-timesheet-start-end-editor')
-            let firstEditor = startEndEditors[0]
-            let inputs = firstEditor.querySelectorAll('.wx-time-input')
-            let startInput = inputs[0]
-            let endInput = inputs[1]
 
+            return result + str + valorProcesado
+        }, '')
 
-            const start1 = new Date()
+        // Crear un contenedor temporal
+        const plantilla = document.createElement('template')
+        plantilla.innerHTML = htmlString.trim()
 
-            let inicio = parseInt(this.storageGet('hora-inicio'))
-            inicio = isNaN(inicio) ? 8 : inicio
-            let comida = parseInt(this.storageGet('hora-comida'))
-            comida = isNaN(comida) ? 14 : comida
-            let duracionComida = parseInt(this.storageGet('duracion-comida'))
-            duracionComida = isNaN(duracionComida) ? 20 : duracionComida
+        // Procesar eventos @click, @input, etc. y elementos DOM interpolados
+        const procesarNodo = (elemento) => {
+            // Procesar atributos del elemento actual
+            if (elemento.attributes) {
+                Array.from(elemento.attributes).forEach(atributo => {
+                    // Procesar eventos @evento
+                    if (atributo.name.startsWith('@')) {
+                        const nombreEvento = atributo.name.substring(1)
+                        const valorManejador = atributo.value
 
-            const minutoInicio = this.randomInt(0, 15)
-            start1.setHours(inicio)
-            start1.setMinutes(minutoInicio)
+                        const coincidenciaManejador = valorManejador.match(/__handler_(\d+)__/)
+                        if (coincidenciaManejador) {
+                            const indiceManejador = parseInt(coincidenciaManejador[1])
+                            const manejador = values[indiceManejador]
 
-            const c = (comida - inicio) * 60
-            const rndComida = this.randomInt(this.randomInt(c - 30, c), this.randomInt(c, c + 30))
-            const end1 = new Date(start1.getTime() + (rndComida * 60000))
+                            if (typeof manejador === 'function') {
+                                elemento.addEventListener(nombreEvento, manejador)
+                            }
+                        }
 
+                        elemento.removeAttribute(atributo.name)
+                    }
 
-            const start1Date = this.adjustClockinTime(start1, false)
-            const end1Date = this.adjustClockinTime(end1, false)
+                    // Procesar placeholders de elementos DOM
+                    if (atributo.name === 'data-element-placeholder') {
+                        const coincidenciaElemento = atributo.value.match(/__element_(\d+)__/)
+                        if (coincidenciaElemento) {
+                            const indiceElemento = parseInt(coincidenciaElemento[1])
+                            const elementoDOM = values[indiceElemento]
 
-
-            await this.setInputTime(startInput, start1Date)
-            await this.setInputTime(endInput, end1Date)
-
-            ////
-            await this.addNewStartEndEditor(dayTitle)
-            startEndEditors = day.querySelectorAll('.wx-timesheet-start-end-editor')
-            let lastEditor = startEndEditors[startEndEditors.length - 1]
-            inputs = lastEditor.querySelectorAll('.wx-time-input')
-            startInput = inputs[0]
-            endInput = inputs[1]
-            ////
-
-            const rndComiendo = this.randomInt(duracionComida - 5, duracionComida + 5)
-            const start2 = new Date(end1.getTime() + (rndComiendo * 60000))
-            const restantes = this.minutosJornada - rndComida
-            const end2 = new Date(start2.getTime() + ((restantes + this.randomInt(-5, 10)) * 60000))
-
-            const start2Date = this.adjustClockinTime(start2, false)
-            const end2Date = this.adjustClockinTime(end2, false)
-
-            await this.setInputTime(startInput, start2Date)
-            await this.setInputTime(endInput, end2Date)
-
-            await this.saveDay(dayTitle)
-        }
-    }
-
-    renderMinutos(minutos, usarSigno = false) {
-        let signo = Math.sign(minutos) >= 0 ? '+' : '-'
-        signo = usarSigno ? signo : ""
-        let horas = Math.abs(Math.trunc(minutos / 60))
-        let mins = Math.abs(minutos % 60)
-        return `${signo} ${horas}h ${mins}m`
-    }
-
-    getSelectorHoy() {
-        const dateNow = new Date()
-        const year = dateNow.getFullYear()
-        const month = ('00' + (dateNow.getMonth() + 1)).slice(-2)
-        const monthDay = ('00' + dateNow.getDate()).slice(-2)
-        return `wx-timesheet-day > [id="timesheet-day-${year}-${month}-${monthDay}"]`
-    }
-    getDayTitleDate(dayTitle) {
-        const auxSplit = dayTitle.getAttribute('id').split('timesheet-day-')[1].split('-')
-        const dtYear = parseInt(auxSplit[0])
-        const dtMonth = parseInt(auxSplit[1]) - 1
-        const dtDay = parseInt(auxSplit[2])
-
-        const date = new Date()
-        date.setFullYear(dtYear)
-        date.setMonth(dtMonth)
-        date.setDate(dtDay)
-        date.setHours(0, 0, 1)
-        return date
-    }
-
-    getTiempoTrabajadoHoy() {
-        let horas = 0, minutos = 0
-        const main = this.getMain()
-        if (main != null) {
-            const dayTitle = main.querySelector(this.getSelectorHoy())
-            if (dayTitle != null) {
-                const daySummary = dayTitle.querySelector('.wx-timesheet-day__summary')
-                const text = daySummary.innerText.trim()
-                if (text != "") {
-                    const split = text.split('h')
-                    horas = parseInt(split[0].trim())
-                    minutos = parseInt(split[1].trim().split('m')[0].trim())
-                }
-            }
-        }
-        return { horas: horas, minutos: minutos, totalMinutos: (horas * 60 + minutos) }
-    }
-    async getTiempoTrabajadoMes() {
-        const main = this.getMain()
-        const allDays = main.querySelectorAll("wx-timesheet-day")
-        let accumulatedMin = 0
-        for (let i = 0; i < allDays.length; i++) {
-            const day = allDays[i]
-            const dayTitle = day.querySelector('[class^="wx-timesheet-day"]')
-            const esDiaDeGuardia = await this.esDiaDeGuardia(dayTitle)
-            if (!esDiaDeGuardia) {
-                const daySummary = day.querySelector('.wx-timesheet-day__summary')
-                const text = daySummary.innerText.trim()
-                if (text != "") {
-                    const split = text.split('h')
-                    const hora = parseInt(split[0].trim())
-                    const minuto = parseInt(split[1].trim().split('m')[0].trim())
-                    const minutosDia = hora * 60 + minuto
-                    accumulatedMin += minutosDia
-                }
-            }
-        }
-        const horas = Math.floor(accumulatedMin / 60)
-        const minutos = accumulatedMin % 60
-        return { horas: horas, minutos: minutos, totalMinutos: accumulatedMin }
-    }
-    async getDiasTrabajoMes() {
-        const dayTitles = this.getMain().querySelectorAll('.wx-timesheet-day__header-weekday')
-        let todayTitle = this.getMain().querySelector(this.getSelectorHoy())
-        if (todayTitle == null) {
-            //Si today no existe asumo que ya ha pasado el mes de esta hoja y pongo el ultimo día como today
-            todayTitle = dayTitles[dayTitles.length - 1]
-        }
-        let contadorDias = 0
-        let contadorNoTrabajo = 0
-        let contadorMediosDias = 0
-        let posicionHoy = 0
-        let minutosATrabajar = 0
-        let minutosATrabajarHastaHoy = 0
-
-
-        // Conserver expandido actual
-        const posicionSroll = document.body.scrollTop
-        let diaExpandido = null
-        for (let i = 0; i < dayTitles.length; i++) {
-            const dayTitle = dayTitles[i]
-            let isExpanded = dayTitle.getAttribute('aria-expanded') === 'true'
-            if (isExpanded) {
-                diaExpandido = { position: posicionSroll, elem: dayTitle }
-            }
-        }
-
-        const diasTrabajo = []
-        for (let i = 0; i < dayTitles.length; i++) {
-            const dayTitle = dayTitles[i]
-            const dayIndicators = dayTitle.querySelector('.wx-timesheet-day__indicators')
-            const esMedioDiaDeTrabajo = await this.esMedioDiaDeTrabajo(dayTitle)
-            if (esMedioDiaDeTrabajo) {
-                contadorMediosDias++
-                minutosATrabajar += this.minutosMediaJornada
-                diasTrabajo.push({ dayTitle: dayTitle, esMedio: esMedioDiaDeTrabajo })
-            } else if (this.esDiaDeTrabajo(dayIndicators)) {
-                contadorDias++
-                minutosATrabajar += this.minutosJornada
-                diasTrabajo.push({ dayTitle: dayTitle, esMedio: esMedioDiaDeTrabajo })
-            } else {
-                contadorNoTrabajo++
-            }
-        }
-
-        let enterosHastaHoy = 0
-        let mediosHastaHoy = 0
-        for (let i = 0; i < diasTrabajo.length; i++) {
-            const dayTitle = diasTrabajo[i].dayTitle
-            const esMedio = diasTrabajo[i].esMedio
-            const dayDate = this.getDayTitleDate(dayTitle)
-            const now = new Date()
-            const mismoMes = dayDate.getMonth() == now.getMonth()
-            const antesHoy = dayDate <= now && dayDate.getDate() <= now.getDate()
-            if (!mismoMes || (mismoMes && antesHoy)) {
-                posicionHoy++
-                if (esMedio) {
-                    minutosATrabajarHastaHoy += this.minutosMediaJornada
-                    mediosHastaHoy++
-                } else {
-                    minutosATrabajarHastaHoy += this.minutosJornada
-                    enterosHastaHoy++
-                }
-            }
-        }
-
-        return {
-            posicionHoy: posicionHoy,
-            notrabajo: contadorNoTrabajo,
-            total: contadorDias,
-            totalMedios: contadorMediosDias,
-            minutosATrabajar: minutosATrabajar,
-            minutosATrabajarHastaHoy: minutosATrabajarHastaHoy,
-            diasTrabajo: diasTrabajo,
-            enterosHastaHoy: enterosHastaHoy,
-            mediosHastaHoy: mediosHastaHoy,
-            diaExpandido: diaExpandido
-        }
-    }
-    esDiaDeTrabajo(dayIndicators) {
-        if (dayIndicators != null && dayIndicators.children.length > 0) {
-            const descendientes = dayIndicators.querySelectorAll('*')
-            for (let i = 0; i < descendientes.length; i++) {
-                const descendiente = descendientes[i]
-                for (let j = 0; j < descendiente.classList.length; j++) {
-                    const clase = descendiente.classList[j]
-                    for (let k = 0; k < this.indicadoresNoTrabajo.length; k++) {
-                        const indicador = this.indicadoresNoTrabajo[k]
-                        if (clase.indexOf(indicador) != -1) {
-                            return false
+                            if (elementoDOM instanceof Element) {
+                                elemento.parentNode.replaceChild(elementoDOM, elemento)
+                            }
                         }
                     }
-                }
-            }
-        }
-        return true
-    }
-    async esMedioDiaDeTrabajo(dayTitle) {
-        return await this.esDiaDe('medio', dayTitle)
-    }
-    async esDiaDeGuardia(dayTitle) {
-        return await this.esDiaDe('guardia', dayTitle)
-    }
-    async esDiaDe(tipoDeDia, dayTitle) {
-        const dayId = dayTitle.getAttribute('id')
-        const cacheKey = `${dayId}-${tipoDeDia}`
-        
-        // Verificar si ya tenemos el resultado en caché
-        if (this.cacheTiposDia[cacheKey] !== undefined) {
-            return this.cacheTiposDia[cacheKey]
-        }
-        
-        const dayIndicators = dayTitle.querySelector('.wx-timesheet-day__indicators')
-        let foundComment = false
-        if (dayIndicators != null && dayIndicators.children.length > 0) {
-            const descendientes = dayIndicators.querySelectorAll('*')
-            for (let i = 0; i < descendientes.length; i++) {
-                const descendiente = descendientes[i]
-                for (let j = 0; j < descendiente.classList.length; j++) {
-                    const clase = descendiente.classList[j]
-                    if (clase.indexOf('indicator-self-comment') != -1) {
-                        foundComment = true
-                        break
+
+                    // Procesar placeholders de arrays
+                    if (atributo.name === 'data-array-placeholder') {
+                        const coincidenciaArray = atributo.value.match(/__array_(\d+)__/)
+                        if (coincidenciaArray) {
+                            const indiceArray = parseInt(coincidenciaArray[1])
+                            const arreglo = values[indiceArray]
+
+                            if (Array.isArray(arreglo)) {
+                                const fragmento = document.createDocumentFragment()
+                                arreglo.forEach(item => {
+                                    if (item instanceof Element) {
+                                        fragmento.appendChild(item)
+                                    } else if (typeof item === 'string') {
+                                        const divTemporal = document.createElement('div')
+                                        divTemporal.innerHTML = item
+                                        while (divTemporal.firstChild) {
+                                            fragmento.appendChild(divTemporal.firstChild)
+                                        }
+                                    }
+                                })
+                                elemento.parentNode.replaceChild(fragmento, elemento)
+                            }
+                        }
                     }
-                }
-                if (foundComment === true) {
-                    break
-                }
+                })
             }
+
+            // Procesar hijos recursivamente
+            Array.from(elemento.children).forEach(hijo => procesarNodo(hijo))
         }
-        
-        let resultado = false
-        if (foundComment === true) {
-            // Recordar el estado inicial para no cerrar un día que ya estaba abierto
-            let wasExpandedInitially = dayTitle.getAttribute('aria-expanded') === 'true'
-            
-            if (!wasExpandedInitially) {
-                dayTitle.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
-                await new Promise(r => setTimeout(r, 200))
-            }
-            let els1 = Array.from(dayTitle.parentNode.querySelectorAll('textarea'))
-            let els2 = Array.from(dayTitle.parentNode.querySelectorAll('.wx-comment__body'))
-            els1 = els1.filter(el => {
-                return el.value.toLowerCase().indexOf(tipoDeDia) != -1
-            })
-            els2 = els2.filter(el => {
-                return el.innerHTML.trim().toLowerCase().indexOf(tipoDeDia) != -1
-            })
-            
-            // Solo cerrar si nosotros lo abrimos (no estaba abierto inicialmente)
-            if (!wasExpandedInitially) {
-                dayTitle.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
-                await new Promise(r => setTimeout(r, 200))
-            }
-            
-            if (els1.length > 0 || els2.length > 0) {
-                resultado = true
-            }
+
+        const contenido = plantilla.content.firstChild
+        if (contenido) {
+            procesarNodo(contenido)
         }
-        
-        // Guardar en caché
-        this.cacheTiposDia[cacheKey] = resultado
-        return resultado
-    }
-    esFinde(dayTitle) {
-        const cls = dayTitle.getAttribute('class')
-        return cls.indexOf('weekend') != -1
+
+        return contenido
     }
 
-    async renderAccumulatedTimePerDay() {
-        const main = this.getMain()
-        const allDays = main.querySelectorAll("wx-timesheet-day")
-        let accumulatedMin = 0
-        for (let i = 0; i < allDays.length; i++) {
-            const day = allDays[i]
-            const dayTitle = day.querySelector('[class^="wx-timesheet-day"]')
-            const esMedio = await this.esMedioDiaDeTrabajo(dayTitle)
-            let minutosJornada = 0
-            if (!this.esFinde(dayTitle)) {
-                minutosJornada = esMedio === true ? this.minutosMediaJornada : this.minutosJornada
-            }
-            const daySummary = day.querySelector('.wx-timesheet-day__summary')
-            const text = daySummary.innerText.trim()
-            const id = dayTitle.getAttribute("id")
-            const accumuladoId = `${id}-acumulado`
-            let accEl = dayTitle.querySelector(`#${accumuladoId}`)
-            if (accEl == null) {
-                accEl = document.createElement("div")
-                accEl.setAttribute("id", `${id}-acumulado`)
-                accEl.classList.add('acumulado-por-dia', 'fs60')
-                dayTitle.appendChild(accEl)
-            }
-            if (text != "") {
-                const split = text.split('h')
-                const minutes = parseInt(split[0].trim()) * 60 + parseInt(split[1].trim().split('m')[0].trim())
-                let diffMin = 0
-                const esDiaDeGuardia = await this.esDiaDeGuardia(dayTitle)
-                if (!esDiaDeGuardia) {
-                    diffMin = minutes - minutosJornada
-                    accumulatedMin += diffMin
-                }
+    // ============================================================================
+    // STYLES - Estilos del componente
+    // ============================================================================
 
-                const colorDiffMin = diffMin < 0 ? "naranja" : "turquesa";
-                const colorAccMin = accumulatedMin < 0 ? "naranja" : "turquesa";
-
-                if (minutes > 0)
-                    accEl.innerHTML = `
-                        <span class="gris">Día: </span>
-                        <span class="${colorDiffMin}" title="Horas trabajadas de más en el dia.">
-                            ${this.renderMinutos(diffMin, true)}
-                        </span>
-                        &nbsp;&nbsp;
-                        <span class="gris">Mes: </span>
-                        <span class="${colorAccMin}" title="Horas acumuladas en el mes hasta fecha.">
-                            ${this.renderMinutos(accumulatedMin, true)}
-                        </span>
-                    `
-                else {
-                    accEl.innerHTML = ''
-                }
-            } else {
-                accEl.innerHTML = ''
-            }
-        }
-    }
-
-    getHoraSalidaHoy(minutosRestantes) {
-        let salida = new Date(Date.now() + minutosRestantes * 60000)
-        let salidaMinutos = salida.getMinutes()
-        let formatoMinutos = salidaMinutos < 10 ? "0" + salidaMinutos : salidaMinutos
-        return `<b>${salida.getHours()}:${formatoMinutos}</b>
-        <span> ${salida.getDate()} ${this.meses[salida.getMonth()]}</span>`
-    }
-
-    renderHoy(parent, dat) {
-        let hoyEl = parent.querySelector('#hoy')
-        if (hoyEl == null) {
-            hoyEl = document.createElement('div')
-            hoyEl.setAttribute('id', 'hoy')
-            parent.appendChild(hoyEl)
-        }
-        const t1 = 'Abrir hoy'
-        const t2 = 'Registrar tiempos aleatoriamente hoy'
-        const t = this.getTiempoTrabajadoHoy()
-
-        const datHoy = dat.diasTrabajo[dat.posicionHoy - 1]
-        const mj = datHoy != null ? (datHoy.esMedio ? this.minutosMediaJornada : this.minutosJornada) : 0
-        hoyEl.innerHTML = `
-            <div style="height:10px"></div>
-            <div class="titulo1 d-flex">
-                <div class="i">Hoy</div>
-                <div class="flex"></div>
-                <div id="verHoy" class="pntr azul n" title="${t1}">&#x27A1; &nbsp;</div>
-            </div>
-            <div class="contenido1">
-                <span class="verde b"> ${t.horas}h ${t.minutos}m  </span>
-                <span class=""> de </span>
-                <span class="b"> ${this.renderMinutos(mj)} </span>
-            </div>
-        `
-        const verHoy = hoyEl.querySelector('#verHoy')
-        verHoy.addEventListener('click', () => {
-            this.mostrarDia()
-        })
-    }
-    async renderMesHastaHoy(parent, dat) {
-        let mesEl = parent.querySelector('#meshoy')
-        if (mesEl == null) {
-            mesEl = document.createElement('div')
-            mesEl.setAttribute('id', 'meshoy')
-            parent.appendChild(mesEl)
-        }
-        const t = await this.getTiempoTrabajadoMes()
-        const mj = this.minutosJornada
-        const mmj = this.minutosMediaJornada
-
-        const minutosRestantes = (t.totalMinutos) - (dat.minutosATrabajarHastaHoy)
-        let txtRestantes = '', colorRestantes = ''
-        if (minutosRestantes < 0) {
-            colorRestantes = 'naranja'
-            txtRestantes = 'restantes'
-        } else {
-            colorRestantes = 'turquesa'
-            txtRestantes = 'de más'
-        }
-        mesEl.innerHTML = `
-            <div style="height:10px"></div>
-            <div class="titulo1 d-flex jc-sb">
-                <div class="i">Este mes hasta hoy</div>
-            </div>
-            <div class="contenido1">
-                <div class=" ">
-                    <span class="b morado"> ${dat.posicionHoy}º día </span> de
-                    <span class="b"> ${dat.total + dat.totalMedios} </span> días laborables
-                </div>
-                <div class=" ">
-                    <span class="verde b"> ${this.renderMinutos(t.totalMinutos)}</span>
-                    <span class=""> de </span>
-                    <span class="b"> ${this.renderMinutos(dat.minutosATrabajarHastaHoy)}</span>
-                    <span class="gris fs80">
-                        ${dat.enterosHastaHoy} x ${this.renderMinutos(mj)} +
-                        ${dat.mediosHastaHoy} x ${this.renderMinutos(mmj)}
-                    </span>
-                </div>
-                <div class=" ">
-                    <span class="${colorRestantes} b"> ${this.renderMinutos(minutosRestantes, true)}</span> ${txtRestantes}
-                </div>
-            </div>
-            <div style="height:5px"></div>
-            <div class="titulo1 d-flex jc-sb">
-                <div class="i">Hora de salida hoy</div>
-            </div>
-            <div class="contenido1">
-                ${this.getHoraSalidaHoy(-minutosRestantes)}
-            </div>
-        `
-    }
-    async renderMes(parent, dat) {
-        let mesEl = parent.querySelector('#mes')
-        if (mesEl == null) {
-            mesEl = document.createElement('div')
-            mesEl.setAttribute('id', 'mes')
-            parent.appendChild(mesEl)
-        }
-        const t = await this.getTiempoTrabajadoMes()
-        const mj = this.minutosJornada
-        const mmj = this.minutosMediaJornada
-
-        const minutosATrabajar = (mj * dat.total) + (mmj * dat.totalMedios)
-        const minutosRestantes = (t.horas * 60 + t.minutos) - (minutosATrabajar)
-        let txtRestantes = '', colorRestantes = ''
-        if (minutosRestantes < 0) {
-            colorRestantes = 'naranja'
-            txtRestantes = 'restantes'
-        } else {
-            colorRestantes = 'turquesa'
-            txtRestantes = 'de más'
-        }
-        const t1 = 'Mostrar/Ocultar botón de enviar'
-        mesEl.innerHTML = `
-            <div style="height:10px"></div>
-            <div class="titulo1 d-flex jc-sb">
-                <div class="i">Este mes</div>
-                <div id="verEnviar" class="pntr azul n" title="${t1}">&#9993; &nbsp;</div>
-            </div>
-            <div class="contenido1">
-                <div class=" ">
-                    <span class="b rojo"> ${dat.notrabajo} </span> días no laborables
-                    <br>
-                    <span class="b"> ${dat.totalMedios} </span> &#189; días laborables
-                    <br>
-                    <span class="b"> ${dat.total} </span> días laborables
-                </div>
-                <div class=" ">
-                    <span class="verde b"> ${this.renderMinutos(t.horas * 60 + t.minutos)}</span>
-                    <span class=""> de </span>
-                    <span class="b"> ${this.renderMinutos(minutosATrabajar)}</span>
-                    <span class="gris fs80">
-                        ${dat.total} x ${this.renderMinutos(mj)} +
-                        ${dat.totalMedios} x ${this.renderMinutos(mmj)}
-                    </span>
-                </div>
-                <div class=" ">
-                    <span class="${colorRestantes} b"> ${this.renderMinutos(minutosRestantes, true)}</span> ${txtRestantes}
-                </div>
-            </div>
-        `
-        const sobre = mesEl.querySelector('#verEnviar')
-        sobre.addEventListener('click', () => {
-            this.alternarBotonEnviar()
-        })
-    }
-    renderMinutosMeses(parent) {
-        let mesesEl = parent.querySelector('#minutosMeses')
-        if (mesesEl == null) {
-            mesesEl = document.createElement('div')
-            mesesEl.setAttribute('id', 'minutosMeses')
-            parent.appendChild(mesesEl)
-        }
-        const keys = Object.keys(localStorage)
-        const dataMeses = keys.filter(k => k.startsWith('timesheetplus-restantes'))
-            .map(k => k.replace('timesheetplus-', ''))
-            .map(k => this.storageGet(k))
-        dataMeses.sort((a, b) => {
-            return a.month - b.month
-        })
-
-
-        const renderMes = (d) => {
-            const key = `restantes-${d.month}-${d.year}`
-            return `
-                <div class="d-flex">
-                    <div>
-                        ${this.meses[d.month - 1]} ${d.year}: <span class="${d.minutosRestantes < 0 ? 'naranja' : 'turquesa'}">${this.renderMinutos(d.minutosRestantes, true)}</span>
-                    </div>
-                    <div class="flex"></div>
-                    <div class="delete rojo i fs80 pntr usn" data-key="${key}">
-                        delete
-                    </div>
-                </div>
-            `
-        }
-        let minutosYear = 0
-        for (let d of dataMeses) {
-            minutosYear += d.minutosRestantes
-        }
-        mesesEl.innerHTML = `
-            <div style="height:10px"></div>
-            <div class="titulo1 d-flex">
-                <div class="i">Minutos restantes total</div>
-            </div>
-            <div>
-                Total: <span class="${minutosYear < 0 ? 'naranja' : 'turquesa'}">${this.renderMinutos(minutosYear, true)}</span>
-            </div>
-            <div class="titulo1 d-flex">
-                <div class="i">Minutos restantes por mes</div>
-            </div>
-            <div style="height:">
-                ${dataMeses.map(d => renderMes(d)).join('')}
-            </div>
-            `
-        const deleteButtons = mesesEl.querySelectorAll('.delete')
-        for (let deleteButton of deleteButtons) {
-            deleteButton.addEventListener('click', async () => {
-                this.storageRemove(deleteButton.dataset.key)
-                await this.refresh()
-            })
-        }
-    }
-    renderConfiguracion(parent) {
-        let configEl = parent.querySelector('#configuracion')
-        if (configEl == null) {
-            configEl = document.createElement('div')
-            configEl.setAttribute('id', 'configuracion')
-            parent.appendChild(configEl)
-        }
-
-        let inicio = parseInt(this.storageGet('hora-inicio'))
-        inicio = isNaN(inicio) ? 8 : inicio
-        let comida = parseInt(this.storageGet('hora-comida'))
-        comida = isNaN(comida) ? 14 : comida
-        let duracionComida = parseInt(this.storageGet('duracion-comida'))
-        duracionComida = isNaN(duracionComida) ? 20 : duracionComida
-
-        const t2 = "Registrar tiempos aleatoriamente en el actual día expandido"
-        configEl.innerHTML = `
-            <div style="height:10px"></div>
-            <div class="titulo1 d-flex">
-                <div class="i">Configuración día aleatorio</div>
-                <div class="flex"></div>
-                <div id="aleatorio" class="pntr azul n" title="${t2}">&#9860; &nbsp;</div>
-            </div>
-            <div class="contenido1">
-                <div class="d-flex ai-c">
-                    <div class="gris" style="width:9em">&#9857; Hora inicio</div>
-                    <div class="flex">
-                        <input id="horaInicio" class="texto" type="number" value="${inicio}" placeholder="8">
-                    </div>
-                </div>
-                <div class="d-flex ai-c">
-                    <div class="gris" style="width:9em">&#9859; Hora comida</div>
-                    <div class="flex">
-                        <input id="horaComida" class="texto" type="number" value="${comida}" placeholder="14">
-                    </div>
-                </div>
-                <div class="d-flex ai-c">
-                    <div class="gris" style="width:9em">&#9858; Minutos comida</div>
-                    <div class="flex">
-                        <input id="minutosComida" class="texto" type="number" value="${duracionComida}" placeholder="20">
-                    </div>
-                </div>
-            <div>
-        `
-        const horaInicio = configEl.querySelector('#horaInicio')
-        horaInicio.addEventListener('change', (e) => {
-            this.storageSet('hora-inicio', e.currentTarget.value)
-        })
-        const horaComida = configEl.querySelector('#horaComida')
-        horaComida.addEventListener('change', (e) => {
-            this.storageSet('hora-comida', e.currentTarget.value)
-        })
-        const minutosComida = configEl.querySelector('#minutosComida')
-        minutosComida.addEventListener('change', (e) => {
-            this.storageSet('duracion-comida', e.currentTarget.value)
-        })
-
-        const aleatorio = configEl.querySelector('#aleatorio')
-        aleatorio.addEventListener('click', async () => {
-            const dayTitles = this.getMain().querySelectorAll('.wx-timesheet-day__header-weekday')
-            let diaExpandido = null
-            for (let i = 0; i < dayTitles.length; i++) {
-                const dayTitle = dayTitles[i]
-                let isExpanded = dayTitle.getAttribute('aria-expanded') === 'true'
-                if (isExpanded) {
-                    diaExpandido = dayTitle
-                }
-            }
-            if (diaExpandido != null) {
-                await this.crearDiaAleatorio(diaExpandido)
-            }
-        })
-    }
-
-
-    ////////////////
-    ////////////////
-    ////////////////
-    ////////////////
-    ////////////////
-    ////////////////
-    getCookie(cname) {
-        var name = cname + "="
-        var decodedCookie = decodeURIComponent(document.cookie)
-        var ca = decodedCookie.split(';')
-        for (var i = 0; i < ca.length; i++) {
-            var c = ca[i];
-            while (c.charAt(0) == ' ') {
-                c = c.substring(1)
-            }
-            if (c.indexOf(name) == 0) {
-                return c.substring(name.length, c.length).replace(/^"(.+)"$/, '$1')
-            }
-        }
-        return ''
-    }
-
-    setCookie(cname, cvalue, exdays) {
-        var d = new Date();
-        d.setTime(d.getTime() + (exdays * 24 * 60 * 60 * 1000));
-        var expires = "expires=" + d.toUTCString();
-        document.cookie = cname + "=" + cvalue + ";" + expires + ";path=/";
-    }
-
-    addStyle() {
-        const style = document.createElement('style');
-        style.textContent = `
-
+    static styles = TimesheetPlus.css`
         .full { position: relative; width: 100%; height: 100%; display: block; }
         .flex { flex: 1; flex-basis: 0.000000001px; }
         .d-flex { display: flex; overflow-wrap:break-word; }
@@ -1129,7 +1476,6 @@ class TimesheetPlus {
         /* Break word fix */
         .d-flex > * { min-width: 0px; min-height:0px; }
 
-        /**/
         #TimesheetPlus {
             position: fixed;
             right:40px;
@@ -1239,15 +1585,12 @@ class TimesheetPlus {
         .fs120{
             font-size: 1.2em;
         }
-
         .fs110{
             font-size: 1.1em;
         }
-
         .fs100{
             font-size: 1em;
         }
-
         .fs90{
             font-size: 0.9em;
         }
@@ -1282,120 +1625,11 @@ class TimesheetPlus {
             border-color: #2188ff !important;
             box-shadow: rgba(27, 31, 35, 0.075) 0px 1px 2px 0px inset, rgba(3, 102, 214, 0.3) 0px 0px 0px 2.8px !important;
         }
-
         input.texto:focus:invalid {
             border-color: #ff2121 !important;
             box-shadow: rgba(27, 31, 35, 0.075) 0px 1px 2px 0px inset, rgba(214, 3, 3, 0.3) 0px 0px 0px 2.8px !important;
         }
-        `
-        document.head.append(style);
-    }
-    createSVGClock() {
-        const svgText = `
-            <svg version="1.1" class="iconic-clock" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" x="0px" y="0px" width="50px" height="50px" viewBox="0 0 384 384" enable-background="new 0 0 384 384" xml:space="preserve">
-            <path class="iconic-clock-frame"    d="M192,0C85.961,0,0,85.961,0,192s85.961,192,192,192s192-85.961,192-192S298.039,0,192,0zM315.037,315.037c-9.454,9.454-19.809,17.679-30.864,24.609l-14.976-25.939l-10.396,6l14.989,25.964c-23.156,12.363-48.947,19.312-75.792,20.216V336h-12v29.887c-26.845-0.903-52.636-7.854-75.793-20.217l14.989-25.963l-10.393-6l-14.976,25.938c-11.055-6.931-21.41-15.154-30.864-24.608s-17.679-19.809-24.61-30.864l25.939-14.976l-6-10.396l-25.961,14.99C25.966,250.637,19.017,224.846,18.113,198H48v-12H18.113c0.904-26.844,7.853-52.634,20.216-75.791l25.96,14.988l6.004-10.395L44.354,99.827c6.931-11.055,15.156-21.41,24.61-30.864s19.809-17.679,30.864-24.61l14.976,25.939l10.395-6L110.208,38.33C133.365,25.966,159.155,19.017,186,18.113V48h12V18.113c26.846,0.904,52.635,7.853,75.792,20.216l-14.991,25.965l10.395,6l14.978-25.942c11.056,6.931,21.41,15.156,30.865,24.611c9.454,9.454,17.679,19.808,24.608,30.863l-25.94,14.976l6,10.396l25.965-14.99c12.363,23.157,19.312,48.948,20.218,75.792H336v12h29.887c-0.904,26.845-7.853,52.636-20.216,75.792l-25.964-14.989l-6.002,10.396l25.941,14.978C332.715,295.229,324.491,305.583,315.037,315.037z" />
-            <line class="iconic-clock-hour-hand" id="foo" fill="none" stroke="#000000" stroke-width="18" stroke-miterlimit="10" x1="192" y1="192" x2="192" y2="87.5"/>
-            <line class="iconic-clock-minute-hand" id="iconic-anim-clock-minute-hand" fill="none" stroke="#000000" stroke-width="12" stroke-miterlimit="10" x1="192" y1="192" x2="192" y2="54"/>
-            <circle class="iconic-clock-axis" cx="192" cy="192" r="9"/>
-            <g class="iconic-clock-second-hand" id="iconic-anim-clock-second-hand">
-                <line class="iconic-clock-second-hand-arm" fill="none" stroke="#ff0000" stroke-width="8" stroke-miterlimit="10" x1="192" y1="192" x2="192" y2="28.5"/>
-                <circle class="iconic-clock-second-hand-axis" fill="#ff0000" cx="192" cy="192" r="4.5"/>
-            </g>
-            <g class="iconic-clock-milli-hand" id="iconic-anim-clock-milli-hand">
-                <line class="iconic-clock-milli-hand-arm" fill="none" stroke="#198CFF" stroke-width="8" stroke-miterlimit="10" x1="192" y1="192" x2="192" y2="28.5"/>
-                <circle class="iconic-clock-milli-hand-axis" fill="#198CFF" cx="192" cy="192" r="4.5"/>
-            </g>
-            <defs>
-            <animateTransform
-                    type="rotate"
-                    fill="remove"
-                    restart="always"
-                    calcMode="linear"
-                    accumulate="none"
-                    additive="sum"
-                    xlink:href="#iconic-anim-clock-hour-hand"
-                    repeatCount="indefinite"
-                    dur="43200s"
-                    to="360 192 192"
-                    from="0 192 192"
-                    attributeName="transform"
-                    attributeType="xml">
-            </animateTransform>
-
-            <animateTransform
-                    type="rotate"
-                    fill="remove"
-                    restart="always"
-                    calcMode="linear"
-                    accumulate="none"
-                    additive="sum"
-                    xlink:href="#iconic-anim-clock-minute-hand"
-                    repeatCount="indefinite"
-                    dur="3600s"
-                    to="360 192 192"
-                    from="0 192 192"
-                    attributeName="transform"
-                    attributeType="xml">
-            </animateTransform>
-
-            <animateTransform
-                    type="rotate"
-                    fill="remove"
-                    restart="always"
-                    calcMode="linear"
-                    accumulate="none"
-                    additive="sum"
-                    xlink:href="#iconic-anim-clock-second-hand"
-                    repeatCount="indefinite"
-                    dur="60s"
-                    to="360 192 192"
-                    from="0 192 192"
-                    attributeName="transform"
-                    attributeType="xml">
-            </animateTransform>
-
-            <animateTransform
-                    type="rotate"
-                    fill="remove"
-                    restart="always"
-                    calcMode="linear"
-                    accumulate="none"
-                    additive="sum"
-                    xlink:href="#iconic-anim-clock-milli-hand"
-                    repeatCount="indefinite"
-                    dur="1s"
-                    to="360 192 192"
-                    from="0 192 192"
-                    attributeName="transform"
-                    attributeType="xml">
-            </animateTransform>
-            </defs>
-        </svg>
-        `
-        const div = document.createElement("div")
-        div.setAttribute('id', 'relojsvgel')
-        div.innerHTML = svgText
-        div.style.paddingLeft = '10px'
-        div.style.display = 'none'
-        const svg = div.querySelector('svg')
-
-        var date = new Date
-        var seconds = date.getSeconds()
-        var minutes = date.getMinutes()
-        var hours = date.getHours()
-        hours = (hours > 12) ? hours - 12 : hours
-
-        minutes = (minutes * 60) + seconds
-        hours = (hours * 3600) + minutes
-
-        svg.querySelector('.iconic-clock-milli-hand').setAttribute('transform', 'rotate(' + 360 * (seconds) + ',192,192)');
-        svg.querySelector('.iconic-clock-second-hand').setAttribute('transform', 'rotate(' + 360 * (seconds / 60) + ',192,192)');
-        svg.querySelector('.iconic-clock-minute-hand').setAttribute('transform', 'rotate(' + 360 * (minutes / 3600) + ',192,192)');
-        svg.querySelector('.iconic-clock-hour-hand').setAttribute('transform', 'rotate(' + 360 * (hours / 43200) + ',192,192)')
-        return div
-    }
-    randomInt(min, max) { // min and max included
-        return Math.floor(Math.random() * (max - min + 1) + min)
-    }
+    `
 }
+
 new TimesheetPlus()
