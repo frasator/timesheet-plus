@@ -28,7 +28,7 @@ class TimesheetPlus {
 
         // Constantes de tiempo
         this.TIEMPO_ESPERA_DOM = 1000
-        this.INTERVALO_ACTUALIZACION = 5000
+        this.INTERVALO_ACTUALIZACION = 6000
         this.INTERVALO_KEEP_ALIVE = 60000 * 15
         this.INTERVALO_BUSCAR_CONTAINER = 4000
         this.DELAY_ESPERA_CORTO = 100
@@ -519,7 +519,7 @@ class TimesheetPlus {
 
         if (!estabaExpandidoInicialmente) {
             tituloDia.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
-            await new Promise(r => setTimeout(r, this.DELAY_ESPERA_CORTO))
+            await new Promise(r => setTimeout(r, this.DELAY_ESPERA_CLICK))
         }
         
         // Buscar el tipo de día en comentarios
@@ -532,7 +532,7 @@ class TimesheetPlus {
         // Cerrar día solo si nosotros lo abrimos
         if (!estabaExpandidoInicialmente) {
             tituloDia.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
-            await new Promise(r => setTimeout(r, this.DELAY_ESPERA_CORTO))
+            await new Promise(r => setTimeout(r, this.DELAY_ESPERA_CLICK))
         }
 
         // Guardar en caché
