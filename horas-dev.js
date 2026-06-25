@@ -28,12 +28,13 @@ class TimesheetPlus {
 
         // Constantes de tiempo
         this.TIEMPO_ESPERA_DOM = 1000
-        this.INTERVALO_ACTUALIZACION = 6000
+        this.INTERVALO_ACTUALIZACION = 3000
         this.INTERVALO_KEEP_ALIVE = 60000 * 15
         this.INTERVALO_BUSCAR_CONTAINER = 4000
         this.DELAY_ESPERA_CORTO = 100
         this.DELAY_ESPERA_CLICK = 20
         this.DELAY_GUARDAR = 10
+        this.TIEMPO_INACTIVIDAD_USUARIO = 2000
         this.DURACION_ENTRADA_INICIAL = 5 * 60000
         this.OFFSET_SCROLL_DIA = 110
 
@@ -74,13 +75,16 @@ class TimesheetPlus {
         this.estado = {
             inicializado: false,
             datos: null,              // Datos del mes (días laborables, etc.)
-            tiempoTrabajadoMes: null // Tiempo total trabajado en el mes
+            tiempoTrabajadoMes: null, // Tiempo total trabajado en el mes
+            tiempoTrabajadoHoy: null  // Tiempo trabajado hoy
         }
 
         // Cache temporal para evitar releer el mismo día en una pasada
         this.cache = {
             tiposDia: {}            // Cache temporal de tipos de día (se limpia cada pasada)
         }
+
+        this.ultimaActividadUsuario = 0
 
         // Intervalos de actualización
         this.intervalos = {
@@ -89,8 +93,61 @@ class TimesheetPlus {
             mantenerVivo: null
         }
 
+        this.configurarDeteccionActividadUsuario()
+
         // Inicializar cuando el DOM esté listo
         this.iniciarCuandoEsteListaLaPagina()
+    }
+
+    /**
+     * Registra actividad real del usuario para evitar actualizar mientras interactúa
+     */
+    configurarDeteccionActividadUsuario() {
+        const eventosActividad = [
+            'keydown',
+            'keyup',
+            'mousedown',
+            'mousemove',
+            'pointerdown',
+            'pointermove',
+            'touchstart',
+            'touchmove',
+            'wheel',
+            'input',
+            'change',
+            'scroll'
+        ]
+
+        const registrarActividad = (evento) => {
+            if (evento.isTrusted) {
+                this.ultimaActividadUsuario = Date.now()
+            }
+        }
+
+        eventosActividad.forEach(evento => {
+            window.addEventListener(evento, registrarActividad, { capture: true, passive: true })
+        })
+    }
+
+    /**
+     * Indica si el usuario lleva suficiente tiempo sin interactuar con la página
+     */
+    usuarioEstaInactivo() {
+        return Date.now() - this.ultimaActividadUsuario >= this.TIEMPO_INACTIVIDAD_USUARIO
+    }
+
+    /**
+     * Indica si la página original está cargando contenido
+     */
+    hayLoaderActivo() {
+        return document.body?.querySelectorAll('sds-loader').length > 0
+    }
+
+    /**
+     * Indica si se puede leer o modificar el DOM original del timesheet
+     */
+    puedeSincronizarConTimesheet() {
+        return this.usuarioEstaInactivo() && !this.hayLoaderActivo()
     }
 
     /**
@@ -224,13 +281,20 @@ class TimesheetPlus {
     async actualizar() {
         if (!this.estado.inicializado) return
 
-        try {
-            // Actualizar datos del estado
-            this.estado.datos = await this.obtenerDiasTrabajadosMes()
-            this.estado.tiempoTrabajadoMes = await this.obtenerTiempoTrabajadoMes()
+        const puedeSincronizarConTimesheet = this.puedeSincronizarConTimesheet()
 
-            // Re-renderizar componente
+        try {
+            if (puedeSincronizarConTimesheet) {
+                // Actualizar datos del estado desde el timesheet original
+                this.estado.datos = await this.obtenerDiasTrabajadosMes()
+                this.estado.tiempoTrabajadoMes = await this.obtenerTiempoTrabajadoMes()
+                this.estado.tiempoTrabajadoHoy = this.obtenerTiempoTrabajadoHoy()
+            }
+
+            // Re-renderizar componente con los últimos datos disponibles
             await this.renderizar()
+
+            if (!puedeSincronizarConTimesheet) return
 
             // Operaciones adicionales en DOM externo
             await this.renderizarTiempoAcumuladoPorDia()
@@ -642,7 +706,7 @@ class TimesheetPlus {
     // ============================================================================
     renderHoyHTML(datos) {
         const textoAyuda = 'Abrir hoy'
-        const tiempoHoy = this.obtenerTiempoTrabajadoHoy()
+        const tiempoHoy = this.estado.tiempoTrabajadoHoy ?? { horas: 0, minutos: 0, totalMinutos: 0 }
         const datosHoy = datos.diasTrabajo[datos.posicionHoy - 1]
         const minutosJornadaHoy = datosHoy?.esMedio ? this.config.minutosMediaJornada : this.config.minutosJornada
 
