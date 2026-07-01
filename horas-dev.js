@@ -14,6 +14,18 @@
  * - Storage: Persistencia en localStorage
  * - Utilities: Funciones auxiliares
  */
+
+/**
+ * Error interno usado para abortar una sincronización en curso
+ * cuando el usuario vuelve a interactuar con la página.
+ */
+class ErrorSincronizacionInterrumpida extends Error {
+    constructor() {
+        super('Sincronización interrumpida por actividad del usuario')
+        this.name = 'ErrorSincronizacionInterrumpida'
+    }
+}
+
 class TimesheetPlus {
     // ============================================================================
     // LIFECYCLE - Ciclo de vida del componente
@@ -26,9 +38,15 @@ class TimesheetPlus {
         // Crear elemento raíz del componente usando TimesheetPlus.html()
         this.element = TimesheetPlus.html`<div id="TimesheetPlus" class="shadow1 fs110"></div>`
 
+        // Barra de estado (persistente, independiente del renderizado del panel)
+        this.barraEstado = TimesheetPlus.html`<div id="barraEstado"></div>`
+        // Contenedor del panel (se re-renderiza sin afectar a la barra de estado)
+        this.panel = TimesheetPlus.html`<div id="panelContenido"></div>`
+        this.element.append(this.barraEstado, this.panel)
+
         // Constantes de tiempo
         this.TIEMPO_ESPERA_DOM = 1000
-        this.INTERVALO_ACTUALIZACION = 3000
+        this.INTERVALO_REINTENTO_SINCRONIZACION = 1000
         this.INTERVALO_KEEP_ALIVE = 60000 * 15
         this.INTERVALO_BUSCAR_CONTAINER = 4000
         this.DELAY_ESPERA_CORTO = 100
@@ -37,6 +55,8 @@ class TimesheetPlus {
         this.TIEMPO_INACTIVIDAD_USUARIO = 2000
         this.DURACION_ENTRADA_INICIAL = 5 * 60000
         this.OFFSET_SCROLL_DIA = 110
+        this.DURACION_MINIMA_BARRA_ESTADO = 600
+        this.INTERVALO_TICK_BARRA_ESTADO = 1000
 
         // Selectores CSS del timesheet original
         this.SELECTORES = {
@@ -54,7 +74,12 @@ class TimesheetPlus {
             comentarios: '.wx-comment__body',
             botonEnviar: '#timesheet-action-button-submit',
             botonAgregar: 'button[aria-label="Add"]',
-            botonEliminar: 'button[aria-label="Delete"]'
+            botonEliminar: 'button[aria-label="Delete"]',
+            main: '.wx-timesheet__main-body',
+            header: '.wx-timesheet__header',
+            headerPlaceholder: '.wx-timesheet__header-placeholder',
+            loader: 'sds-loader',
+            primerDia: '[id^="timesheet-day"]'
         }
 
         // Configuración del componente
@@ -86,11 +111,25 @@ class TimesheetPlus {
 
         this.ultimaActividadUsuario = 0
 
+        // Sincronizar solo tras interacción del usuario (true = hay una pasada pendiente).
+        // Arranca en true para hacer la primera sincronización inicial.
+        this.sincronizacionPendiente = true
+
+        // Temporizador (debounce) que dispara la sincronización cuando el usuario
+        // lleva un rato sin interactuar.
+        this.timeoutActualizar = null
+
+        // Estado de la barra de estado / sincronización
+        this.sincronizando = false
+        this.ultimaSincronizacion = null
+        this.inicioSincronizacion = 0
+        this.timeoutBarraEstado = null
+
         // Intervalos de actualización
         this.intervalos = {
             intentarInit: null,
-            actualizar: null,
-            mantenerVivo: null
+            mantenerVivo: null,
+            tickBarraEstado: null
         }
 
         this.configurarDeteccionActividadUsuario()
@@ -121,6 +160,8 @@ class TimesheetPlus {
         const registrarActividad = (evento) => {
             if (evento.isTrusted) {
                 this.ultimaActividadUsuario = Date.now()
+                this.sincronizacionPendiente = true
+                this.programarSincronizacion()
             }
         }
 
@@ -140,7 +181,7 @@ class TimesheetPlus {
      * Indica si la página original está cargando contenido
      */
     hayLoaderActivo() {
-        return document.body?.querySelectorAll('sds-loader').length > 0
+        return document.body?.querySelectorAll(this.SELECTORES.loader).length > 0
     }
 
     /**
@@ -148,6 +189,16 @@ class TimesheetPlus {
      */
     puedeSincronizarConTimesheet() {
         return this.usuarioEstaInactivo() && !this.hayLoaderActivo()
+    }
+
+    /**
+     * Programa (debounce) una sincronización para dentro de `retardo` ms.
+     * Cada llamada cancela la anterior, de modo que solo se ejecuta una vez que
+     * el usuario deja de interactuar.
+     */
+    programarSincronizacion(retardo = this.TIEMPO_INACTIVIDAD_USUARIO) {
+        clearTimeout(this.timeoutActualizar)
+        this.timeoutActualizar = setTimeout(() => this.actualizar(), retardo)
     }
 
     /**
@@ -171,11 +222,27 @@ class TimesheetPlus {
      */
     iniciarCuandoEsteListaLaPagina() {
         const intentarInit = async () => {
-            const filaEncabezado = document.querySelector('.wx-timesheet__header-placeholder')
-            if (filaEncabezado && !document.getElementById('TimesheetPlus')) {
-                console.log('[TimesheetPlus] Contenedor encontrado, insertando elemento')
-                filaEncabezado.appendChild(this.element)
+            const filaEncabezado = document.querySelector(this.SELECTORES.headerPlaceholder)
+            const hayDias = !!document.querySelector(this.SELECTORES.todosDias)
+
+            // Solo mostrar el panel si estamos en una hoja de servicio con días.
+            if (!filaEncabezado || !hayDias) {
+                if (this.element && this.element.parentNode) {
+                    this.element.style.display = 'none'
+                }
+                return
+            }
+
+            if (!document.getElementById('TimesheetPlus')) {
+                // Insertar en body para que position:fixed sea relativo al viewport
+                // y no a un ancestro con transform/filter (que lo dejaría tapado).
+                document.body.appendChild(this.element)
+                this.ajustarPosicionPanel()
+                window.addEventListener('resize', () => this.ajustarPosicionPanel(), { passive: true })
                 await this.inicializar()
+            } else {
+                this.element.style.display = ''
+                this.ajustarPosicionPanel()
             }
         }
 
@@ -184,30 +251,62 @@ class TimesheetPlus {
     }
 
     /**
+     * Coloca el panel justo debajo de la barra "Hoja de servicio"
+     * midiendo su borde inferior real (en vez de usar un top fijo).
+     */
+    ajustarPosicionPanel() {
+        if (!this.element) return
+        const barra = document.querySelector(this.SELECTORES.header)
+        const margenSuperior = 40
+        const margenInferior = 20
+        const inicio = barra
+            ? Math.max(0, Math.round(barra.getBoundingClientRect().bottom)) + margenSuperior
+            : 160
+        this.element.style.top = `${inicio}px`
+        this.element.style.maxHeight = `calc(100vh - ${inicio + margenInferior}px)`
+
+        // Colocar el panel a la derecha de los días, relativo al ancho de la ventana.
+        const dias = this.obtenerMain()
+        const margenLateral = 20
+        if (dias) {
+            const bordeDerechoDias = Math.round(dias.getBoundingClientRect().right)
+            this.element.style.left = `${bordeDerechoDias + margenLateral}px`
+            this.element.style.right = 'auto'
+        } else {
+            this.element.style.left = 'auto'
+            this.element.style.right = '40px'
+        }
+    }
+
+    /**
      * Inicializa el componente una vez insertado en el DOM
      */
     async inicializar() {
         await new Promise(r => setTimeout(r, this.TIEMPO_ESPERA_DOM))
 
-        // Limpiar intervalos anteriores
-        clearInterval(this.intervalos.actualizar)
+        // Limpiar temporizadores anteriores
+        clearTimeout(this.timeoutActualizar)
         clearInterval(this.intervalos.mantenerVivo)
+        clearInterval(this.intervalos.tickBarraEstado)
 
         // Marcar como inicializado
         this.estado.inicializado = true
 
         // Renderizar estructura inicial
-        await this.renderizar()
-
-        // Configurar actualización automática cada 3 segundos
-        this.intervalos.actualizar = setInterval(async () => {
-            await this.actualizar()
-        }, this.INTERVALO_ACTUALIZACION)
+        this.renderizarBarraEstado()
+        await this.renderizarPanel()
 
         // Mantener sesión activa (cada 15 minutos)
         this.intervalos.mantenerVivo = setInterval(async () => {
             await fetch(window.location.href)
         }, this.INTERVALO_KEEP_ALIVE)
+
+        // Refrescar el contador de la barra de estado en vivo
+        this.intervalos.tickBarraEstado = setInterval(() => {
+            if (!this.sincronizando) {
+                this.renderizarBarraEstado()
+            }
+        }, this.INTERVALO_TICK_BARRA_ESTADO)
 
         // Primera actualización de datos
         await this.actualizar()
@@ -218,9 +317,9 @@ class TimesheetPlus {
     }
 
     /**
-     * Renderiza el componente completo (método principal estilo Lit)
+     * Renderiza el panel completo (método principal estilo Lit)
      */
-    async renderizar() {
+    async renderizarPanel() {
         const datos = this.estado.datos
         const tiempoMes = this.estado.tiempoTrabajadoMes
 
@@ -239,7 +338,7 @@ class TimesheetPlus {
                     <div id="col2"></div>
                 </div>
             `
-            this.element.replaceChildren(...contenido.children)
+            this.panel.replaceChildren(...contenido.children)
             return
         }
 
@@ -272,7 +371,7 @@ class TimesheetPlus {
         `
 
         // Actualizar DOM
-        this.element.replaceChildren(...contenido.children)
+        this.panel.replaceChildren(...contenido.children)
     }
 
     /**
@@ -281,33 +380,65 @@ class TimesheetPlus {
     async actualizar() {
         if (!this.estado.inicializado) return
 
-        const puedeSincronizarConTimesheet = this.puedeSincronizarConTimesheet()
+        // Solo sincronizar si hay una interacción pendiente y se puede sincronizar
+        const debeSincronizar = this.sincronizacionPendiente && this.puedeSincronizarConTimesheet()
 
+        if (debeSincronizar) {
+            // Consumir la bandera: si el usuario vuelve a interactuar durante la
+            // sincronización, se marcará de nuevo y se reprogramará al detectar actividad.
+            this.sincronizacionPendiente = false
+            this.iniciarSincronizacion()
+        } else if (this.sincronizacionPendiente) {
+            // Hay algo pendiente pero no se pudo sincronizar ahora (p. ej. la página
+            // original está cargando). Reintentar en breve.
+            this.programarSincronizacion(this.INTERVALO_REINTENTO_SINCRONIZACION)
+        }
+
+        let sincronizacionCompletada = false
         try {
-            if (puedeSincronizarConTimesheet) {
-                // Actualizar datos del estado desde el timesheet original
-                this.estado.datos = await this.obtenerDiasTrabajadosMes()
-                this.estado.tiempoTrabajadoMes = await this.obtenerTiempoTrabajadoMes()
-                this.estado.tiempoTrabajadoHoy = this.obtenerTiempoTrabajadoHoy()
+            if (debeSincronizar) {
+                // Leer TODO en variables locales antes de publicarlo en el estado.
+                // Si la lectura se interrumpe a mitad (el usuario vuelve a interactuar),
+                // se lanza ErrorSincronizacionInterrumpida y NO se asigna nada, de modo
+                // que el estado conserva los datos de la última sincronización completa.
+                const datos = await this.obtenerDiasTrabajadosMes()
+                const tiempoTrabajadoMes = await this.obtenerTiempoTrabajadoMes()
+                const tiempoTrabajadoHoy = this.obtenerTiempoTrabajadoHoy()
+
+                // Publicación atómica: solo con la lectura completa correcta.
+                this.estado.datos = datos
+                this.estado.tiempoTrabajadoMes = tiempoTrabajadoMes
+                this.estado.tiempoTrabajadoHoy = tiempoTrabajadoHoy
             }
 
             // Re-renderizar componente con los últimos datos disponibles
-            await this.renderizar()
+            await this.renderizarPanel()
 
-            if (!puedeSincronizarConTimesheet) return
+            if (!debeSincronizar) return
 
             // Operaciones adicionales en DOM externo
             await this.renderizarTiempoAcumuladoPorDia()
             await this.restaurarDiaExpandido(this.estado.datos)
             this.guardarMinutosRestantes(this.estado.datos)
 
-            // Ajustar margen del timesheet original
-            const diasMainBody = this.obtenerMain()
-            if (diasMainBody) {
-                diasMainBody.style.marginLeft = "20px"
-            }
+            // Llegó hasta el final sin interrupciones: sincronización válida.
+            sincronizacionCompletada = true
         } catch (error) {
-            console.error('[TimesheetPlus] Error en actualizar:', error)
+            // Si el usuario volvió a interactuar, se aborta la sincronización sin ruido
+            if (!(error instanceof ErrorSincronizacionInterrumpida)) {
+                console.error('[TimesheetPlus] Error en actualizar:', error)
+            }
+        } finally {
+            // Solo marcar fin de sincronización si realmente se inició
+            if (debeSincronizar) {
+                if (!sincronizacionCompletada) {
+                    // No se completó (interrupción o error): dejarla pendiente y
+                    // reintentar cuando el usuario deje de interactuar.
+                    this.sincronizacionPendiente = true
+                    this.programarSincronizacion(this.INTERVALO_REINTENTO_SINCRONIZACION)
+                }
+                this.finalizarSincronizacion(sincronizacionCompletada)
+            }
         }
     }
 
@@ -319,14 +450,14 @@ class TimesheetPlus {
      * Obtiene el contenedor principal del timesheet
      */
     obtenerMain() {
-        return document.querySelector('.wx-timesheet__main-body')
+        return document.querySelector(this.SELECTORES.main)
     }
 
     /**
      * Obtiene la fecha del timesheet actual (ano y mes)
      */
     obtenerFechaHoja() {
-        const tituloDia = document.querySelector('[id^="timesheet-day"]')
+        const tituloDia = document.querySelector(this.SELECTORES.primerDia)
         const partes = tituloDia.getAttribute('id').split('timesheet-day-')[1].split('-')
         const ano = parseInt(partes[0])
         const mes = parseInt(partes[1])
@@ -363,27 +494,30 @@ class TimesheetPlus {
     }
 
     /**
+     * Parsea el texto de resumen de un día ("Xh Ym") a horas, minutos y total.
+     * Devuelve ceros si el texto está vacío.
+     */
+    parsearTiempoResumen(texto) {
+        const limpio = (texto || '').trim()
+        if (!limpio) {
+            return { horas: 0, minutos: 0, totalMinutos: 0 }
+        }
+        const [horasStr, minutosStr] = limpio.split('h')
+        const horas = parseInt(horasStr.trim())
+        const minutos = parseInt(minutosStr.trim().split('m')[0].trim())
+        return { horas, minutos, totalMinutos: horas * 60 + minutos }
+    }
+
+    /**
      * Obtiene el tiempo trabajado hoy
      */
     obtenerTiempoTrabajadoHoy() {
-        let horas = 0, minutos = 0
         const tituloDia = this.obtenerDiaHoy()
-
-        if (tituloDia) {
-            const resumenDia = tituloDia.querySelector(this.SELECTORES.resumenDia)
-            const texto = resumenDia.innerText.trim()
-            if (texto) {
-                const partes = texto.split('h')
-                horas = parseInt(partes[0].trim())
-                minutos = parseInt(partes[1].trim().split('m')[0].trim())
-            }
+        if (!tituloDia) {
+            return { horas: 0, minutos: 0, totalMinutos: 0 }
         }
-
-        return {
-            horas,
-            minutos,
-            totalMinutos: horas * 60 + minutos
-        }
+        const resumenDia = tituloDia.querySelector(this.SELECTORES.resumenDia)
+        return this.parsearTiempoResumen(resumenDia.innerText)
     }
 
     /**
@@ -393,28 +527,16 @@ class TimesheetPlus {
         const todosDias = this.obtenerMain().querySelectorAll(this.SELECTORES.todosDias)
         let minutosAcumulados = 0
 
-        // Deshabilitar interacción del usuario mientras leemos comentarios
-        const estilosOriginales = this.deshabilitarInteraccionUsuario()
-
         for (const contenedorDia of todosDias) {
+            this.verificarInterrupcionSincronizacion()
             const tituloDia = contenedorDia.querySelector(this.SELECTORES.tituloDia)
             const esDiaDeGuardia = await this.esDiaDeGuardia(tituloDia)
 
             if (!esDiaDeGuardia) {
                 const resumenDia = contenedorDia.querySelector(this.SELECTORES.resumenDia)
-                const texto = resumenDia.innerText.trim()
-
-                if (texto) {
-                    const [horasStr, minutosStr] = texto.split('h')
-                    const horas = parseInt(horasStr.trim())
-                    const minutos = parseInt(minutosStr.trim().split('m')[0].trim())
-                    minutosAcumulados += horas * 60 + minutos
-                }
+                minutosAcumulados += this.parsearTiempoResumen(resumenDia.innerText).totalMinutos
             }
         }
-
-        // Restaurar interacción del usuario
-        this.restaurarInteraccionUsuario(estilosOriginales)
 
         return {
             horas: Math.floor(minutosAcumulados / 60),
@@ -446,9 +568,6 @@ class TimesheetPlus {
         let minutosATrabajar = 0
         let minutosATrabajarHastaHoy = 0
 
-        // Deshabilitar interacción del usuario mientras leemos comentarios
-        const estilosOriginales = this.deshabilitarInteraccionUsuario()
-
         // Guardar día expandido actual para restaurarlo al final
         const posicionScroll = document.body.scrollTop
         const diaExpandido = Array.from(titulosDias).find(tituloDia =>
@@ -462,6 +581,7 @@ class TimesheetPlus {
         // Clasificar días del mes
         const diasTrabajo = []
         for (const tituloDia of titulosDias) {
+            this.verificarInterrupcionSincronizacion()
             const indicadoresDia = tituloDia.querySelector(this.SELECTORES.indicadoresDia)
             const esMedioDiaDeTrabajo = await this.esMedioDiaDeTrabajo(tituloDia)
 
@@ -499,9 +619,6 @@ class TimesheetPlus {
                 }
             }
         }
-
-        // Restaurar interacción del usuario
-        this.restaurarInteraccionUsuario(estilosOriginales)
 
         return {
             posicionHoy,
@@ -639,10 +756,8 @@ class TimesheetPlus {
         const todosDias = this.obtenerMain().querySelectorAll(this.SELECTORES.todosDias)
         let minutosAcumulados = 0
 
-        // Deshabilitar interacción del usuario mientras leemos comentarios
-        const estilosOriginales = this.deshabilitarInteraccionUsuario()
-
         for (const contenedorDia of todosDias) {
+            this.verificarInterrupcionSincronizacion()
             const tituloDia = contenedorDia.querySelector(this.SELECTORES.tituloDia)
             const esMedio = await this.esMedioDiaDeTrabajo(tituloDia)
 
@@ -657,8 +772,7 @@ class TimesheetPlus {
             const elementoAcumulado = tituloDia.querySelector(`#${accumuladoId}`)
 
             if (texto) {
-                const [horasStr, minutosStr] = texto.split('h')
-                const minutos = parseInt(horasStr.trim()) * 60 + parseInt(minutosStr.trim().split('m')[0].trim())
+                const minutos = this.parsearTiempoResumen(texto).totalMinutos
                 const esDiaDeGuardia = await this.esDiaDeGuardia(tituloDia)
 
                 if (!esDiaDeGuardia) {
@@ -696,9 +810,6 @@ class TimesheetPlus {
                 elementoAcumulado.remove()
             }
         }
-
-        // Restaurar interacción del usuario
-        this.restaurarInteraccionUsuario(estilosOriginales)
     }
 
     // ============================================================================
@@ -774,7 +885,7 @@ class TimesheetPlus {
 
     renderMesHTML(datos, tiempoMes) {
         const { minutosJornada, minutosMediaJornada } = this.config
-        const minutosATrabajar = minutosJornada * datos.total + minutosMediaJornada * datos.totalMedios
+        const minutosATrabajar = datos.minutosATrabajar
         const minutosRestantes = tiempoMes.horas * 60 + tiempoMes.minutos - minutosATrabajar
         const colorRestantes = minutosRestantes < 0 ? 'naranja' : 'turquesa'
         const textoRestantes = minutosRestantes < 0 ? 'restantes' : 'de más'
@@ -1078,38 +1189,90 @@ class TimesheetPlus {
      */
     guardarMinutosRestantes(datos) {
         const tiempoMes = this.estado.tiempoTrabajadoMes
-        const { minutosJornada, minutosMediaJornada } = this.config
-
-        const minutosATrabajar = minutosJornada * datos.total + minutosMediaJornada * datos.totalMedios
-        const minutosRestantes = tiempoMes.totalMinutos - minutosATrabajar
+        const minutosRestantes = tiempoMes.totalMinutos - datos.minutosATrabajar
 
         const { month, year } = this.obtenerFechaHoja()
         this.storageSet(`restantes-${month}-${year}`, { month, year, minutosRestantes })
     }
 
     /**
-     * Deshabilita la interacción del usuario (userSelect y pointerEvents)
-     * @returns {Object} Estilos originales para poder restaurarlos después
+     * Aborta la sincronización en curso si el usuario ha vuelto a interactuar.
+     * Se llama entre iteraciones de los bucles que leen/modifican el DOM original
+     * para que los clicks del usuario no compitan con la automatización.
      */
-    deshabilitarInteraccionUsuario() {
-        const contenedorTimesheet = this.obtenerMain()
-        const estilosOriginales = {
-            userSelect: contenedorTimesheet.style.userSelect,
-            pointerEvents: contenedorTimesheet.style.pointerEvents
+    verificarInterrupcionSincronizacion() {
+        if (!this.usuarioEstaInactivo()) {
+            throw new ErrorSincronizacionInterrumpida()
         }
-        contenedorTimesheet.style.userSelect = 'none'
-        contenedorTimesheet.style.pointerEvents = 'none'
-        return estilosOriginales
     }
 
     /**
-     * Restaura la interacción del usuario (userSelect y pointerEvents)
-     * @param {Object} estilosOriginales - Estilos originales a restaurar
+     * Marca el inicio de una sincronización y refresca la barra de estado.
      */
-    restaurarInteraccionUsuario(estilosOriginales) {
-        const contenedorTimesheet = this.obtenerMain()
-        contenedorTimesheet.style.userSelect = estilosOriginales.userSelect
-        contenedorTimesheet.style.pointerEvents = estilosOriginales.pointerEvents
+    iniciarSincronizacion() {
+        clearTimeout(this.timeoutBarraEstado)
+        this.inicioSincronizacion = Date.now()
+        this.sincronizando = true
+        this.renderizarBarraEstado()
+    }
+
+    /**
+     * Marca el fin de una sincronización. Respeta una duración mínima visible
+     * del estado "actualizando" para que se aprecie aunque termine muy rápido.
+     *
+     * Si `exito` es false (sincronización interrumpida o con error) no se registra
+     * como última sincronización: la barra conserva el estado anterior y no muestra
+     * un "Actualizado" engañoso.
+     */
+    finalizarSincronizacion(exito = true) {
+        const transcurrido = Date.now() - this.inicioSincronizacion
+        const restante = Math.max(0, this.DURACION_MINIMA_BARRA_ESTADO - transcurrido)
+
+        clearTimeout(this.timeoutBarraEstado)
+        this.timeoutBarraEstado = setTimeout(() => {
+            this.sincronizando = false
+            if (exito) {
+                this.ultimaSincronizacion = new Date()
+            }
+            this.renderizarBarraEstado()
+        }, restante)
+    }
+
+    /**
+     * Renderiza la barra de estado. Es independiente del renderizado del panel
+     * y refleja en todo momento el estado de la sincronización:
+     *
+     * - Sincronizando: "Actualizando…" con spinner, a la derecha (fondo azul).
+     * - En pausa: "⏸ En pausa" a la izquierda porque el usuario está activo
+     *   (fondo naranja); a la derecha, el tiempo desde la última sincronización.
+     * - En espera: solo el tiempo desde la última sincronización, a la derecha.
+     */
+    renderizarBarraEstado() {
+        const enPausa = !this.sincronizando && !this.usuarioEstaInactivo()
+
+        this.barraEstado.classList.toggle('activo', this.sincronizando)
+        this.barraEstado.classList.toggle('pausa', enPausa)
+
+        // Izquierda: solo el indicador de pausa (cuando el usuario está activo)
+        const izquierda = enPausa ? '⏸ En pausa' : ''
+
+        // Derecha: estado de sincronización en curso o tiempo desde la última
+        let derecha
+        if (this.sincronizando) {
+            derecha = '<span class="sync-spinner"></span>Actualizando…'
+        } else if (this.ultimaSincronizacion) {
+            const segundos = Math.round((Date.now() - this.ultimaSincronizacion.getTime()) / 1000)
+            derecha = `✓ Actualizado hace ${segundos}s`
+        } else {
+            derecha = '✓ Actualizado —'
+        }
+
+        this.barraEstado.replaceChildren(TimesheetPlus.html`
+            <div class="sync-contenido">
+                <span class="sync-izq">${izquierda}</span>
+                <span class="sync-der">${derecha}</span>
+            </div>
+        `)
     }
 
     // ============================================================================
@@ -1540,22 +1703,78 @@ class TimesheetPlus {
         /* Break word fix */
         .d-flex > * { min-width: 0px; min-height:0px; }
 
+        /* Alinear los días a la izquierda para dejar sitio al panel a la derecha */
+        .wx-timesheet__main-body {
+            margin-left: 20px !important;
+            margin-right: auto !important;
+        }
+
         #TimesheetPlus {
             position: fixed;
+            top: 160px;
             right:40px;
             background-color: #fafafa;
             border-radius: 3px;
             padding: 20px;
             z-index:1000;
-            height:650px;
-            margin-top:auto;
-            margin-bottom:auto;
+            max-height: calc(100vh - 180px);
             overflow-y:auto;
         }
         .acumulado-por-dia {
             position:absolute;
             bottom:-3px;
             right:7px;
+        }
+
+        #barraEstado {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: -20px -20px 12px -20px;
+            padding: 5px 12px;
+            border-radius: 3px 3px 0 0;
+            background: #f0f0f0;
+            color: #555;
+            font-size: 1.05em;
+            overflow: hidden;
+            transition: background 0.2s ease;
+        }
+        #barraEstado.activo {
+            background: #1e6fd6;
+            color: #fff;
+        }
+        #barraEstado.pausa {
+            background: #ffe0b2;
+            color: #8a5a00;
+        }
+        #barraEstado .sync-contenido {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            width: 100%;
+            gap: 8px;
+        }
+        #barraEstado .sync-izq {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        #barraEstado .sync-der {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        #barraEstado .sync-spinner {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            border: 2px solid #fff;
+            border-top-color: transparent;
+            animation: tsp-spin 0.7s linear infinite;
+            flex: none;
+        }
+        @keyframes tsp-spin {
+            to { transform: rotate(360deg); }
         }
 
         .pntr{
