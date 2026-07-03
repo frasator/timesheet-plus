@@ -92,7 +92,7 @@ class TimesheetPlus {
                 'indicator-absence-approved',
             ],
             meses: ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"],
-            minutosJornada: 7 * 60 + 45,
+            minutosJornada: 8 * 60,
             minutosMediaJornada: 4 * 60
         }
 
@@ -110,6 +110,11 @@ class TimesheetPlus {
         }
 
         this.ultimaActividadUsuario = 0
+
+        // Bandera que indica que hay una operación del usuario en curso
+        // (Auto, Mes auto, Inicio, Fin). Mientras esté activa, se trata como
+        // si el usuario estuviera interactuando: no se sincroniza ni actualiza.
+        this.operacionEnCurso = false
 
         // Sincronizar solo tras interacción del usuario (true = hay una pasada pendiente).
         // Arranca en true para hacer la primera sincronización inicial.
@@ -174,7 +179,7 @@ class TimesheetPlus {
      * Indica si el usuario lleva suficiente tiempo sin interactuar con la página
      */
     usuarioEstaInactivo() {
-        return Date.now() - this.ultimaActividadUsuario >= this.TIEMPO_INACTIVIDAD_USUARIO
+        return !this.operacionEnCurso && Date.now() - this.ultimaActividadUsuario >= this.TIEMPO_INACTIVIDAD_USUARIO
     }
 
     /**
@@ -199,6 +204,28 @@ class TimesheetPlus {
     programarSincronizacion(retardo = this.TIEMPO_INACTIVIDAD_USUARIO) {
         clearTimeout(this.timeoutActualizar)
         this.timeoutActualizar = setTimeout(() => this.actualizar(), retardo)
+    }
+
+    /**
+     * Ejecuta una operación del usuario (Auto, Mes auto, Inicio, Fin) evitando
+     * que se sincronice/actualice mientras dura: durante la operación se trata
+     * como si el usuario estuviera interactuando. Al terminar, reprograma una
+     * sincronización para reflejar los cambios.
+     */
+    async ejecutarOperacion(operacion) {
+        if (this.operacionEnCurso) return
+        this.operacionEnCurso = true
+        clearTimeout(this.timeoutActualizar)
+        this.renderizarBarraEstado()
+        try {
+            await operacion()
+        } finally {
+            this.operacionEnCurso = false
+            this.ultimaActividadUsuario = Date.now()
+            this.sincronizacionPendiente = true
+            this.renderizarBarraEstado()
+            this.programarSincronizacion()
+        }
     }
 
     /**
@@ -239,6 +266,7 @@ class TimesheetPlus {
                 document.body.appendChild(this.element)
                 this.ajustarPosicionPanel()
                 window.addEventListener('resize', () => this.ajustarPosicionPanel(), { passive: true })
+                window.addEventListener('scroll', () => this.ajustarPosicionPanel(), { passive: true, capture: true })
                 await this.inicializar()
             } else {
                 this.element.style.display = ''
@@ -259,9 +287,16 @@ class TimesheetPlus {
         const barra = document.querySelector(this.SELECTORES.header)
         const margenSuperior = 40
         const margenInferior = 20
-        const inicio = barra
-            ? Math.max(0, Math.round(barra.getBoundingClientRect().bottom)) + margenSuperior
+
+        // Borde inferior de la barra superior fija de la página original: el panel
+        // nunca debe quedar por encima de ella (si no, se corta al hacer scroll).
+        const limiteSuperior = this.obtenerLimiteSuperiorPagina()
+
+        const topHeader = barra
+            ? Math.round(barra.getBoundingClientRect().bottom) + margenSuperior
             : 160
+        const inicio = Math.max(limiteSuperior, topHeader)
+
         this.element.style.top = `${inicio}px`
         this.element.style.maxHeight = `calc(100vh - ${inicio + margenInferior}px)`
 
@@ -276,6 +311,40 @@ class TimesheetPlus {
             this.element.style.left = 'auto'
             this.element.style.right = '40px'
         }
+    }
+
+    /**
+     * Calcula el borde inferior de la barra superior fija/pegajosa de la página
+     * original, para que el panel nunca quede por encima de ella (y se corte)
+     * al hacer scroll. Detecta la barra buscando el elemento fixed/sticky más
+     * alto anclado a la parte superior del viewport. Cachea el resultado.
+     */
+    obtenerLimiteSuperiorPagina() {
+        const margen = 10
+
+        // Detectar (una vez) la barra superior fija/pegajosa de la página.
+        if (this.barraSuperiorPagina === undefined) {
+            this.barraSuperiorPagina = null
+            let mejorBottom = 0
+            for (const el of document.body.querySelectorAll('*')) {
+                if (el === this.element || this.element.contains(el)) continue
+                const estilo = getComputedStyle(el)
+                if (estilo.position !== 'fixed' && estilo.position !== 'sticky') continue
+                const rect = el.getBoundingClientRect()
+                // Barra anclada arriba y con ancho relevante
+                if (rect.top <= 2 && rect.height > 0 && rect.width > window.innerWidth * 0.5) {
+                    if (rect.bottom > mejorBottom) {
+                        mejorBottom = rect.bottom
+                        this.barraSuperiorPagina = el
+                    }
+                }
+            }
+        }
+
+        if (this.barraSuperiorPagina && document.body.contains(this.barraSuperiorPagina)) {
+            return Math.round(this.barraSuperiorPagina.getBoundingClientRect().bottom) + margen
+        }
+        return margen
     }
 
     /**
@@ -929,8 +998,6 @@ class TimesheetPlus {
 
     renderConfiguracionHTML() {
         const inicio = parseInt(this.storageGet('hora-inicio')) || 8
-        const comida = parseInt(this.storageGet('hora-comida')) || 14
-        const duracionComida = parseInt(this.storageGet('duracion-comida')) || 20
         const textoBotonAleatorio = "Registrar tiempos aleatoriamente en el actual día expandido"
 
         const handleAleatorio = async () => {
@@ -939,20 +1006,14 @@ class TimesheetPlus {
                 tituloDia => this.estaExpandido(tituloDia)
             )
             if (diaExpandido) {
-                await this.renderDiaAleatorio(diaExpandido)
+                await this.ejecutarOperacion(async () => {
+                    await this.renderDiaAleatorio(diaExpandido)
+                })
             }
         }
 
         const handleHoraInicio = (e) => {
             this.storageSet('hora-inicio', e.target.value)
-        }
-
-        const handleHoraComida = (e) => {
-            this.storageSet('hora-comida', e.target.value)
-        }
-
-        const handleMinutosComida = (e) => {
-            this.storageSet('duracion-comida', e.target.value)
         }
 
         return TimesheetPlus.html`
@@ -968,18 +1029,6 @@ class TimesheetPlus {
                         <div class="gris" style="width:9em">&#9857; Hora inicio</div>
                         <div class="flex">
                             <input class="texto" type="number" value="${inicio}" placeholder="8" @change=${handleHoraInicio}>
-                        </div>
-                    </div>
-                    <div class="d-flex ai-c">
-                        <div class="gris" style="width:9em">&#9859; Hora comida</div>
-                        <div class="flex">
-                            <input class="texto" type="number" value="${comida}" placeholder="14" @change=${handleHoraComida}>
-                        </div>
-                    </div>
-                    <div class="d-flex ai-c">
-                        <div class="gris" style="width:9em">&#9858; Minutos comida</div>
-                        <div class="flex">
-                            <input class="texto" type="number" value="${duracionComida}" placeholder="20" @change=${handleMinutosComida}>
                         </div>
                     </div>
                 </div>
@@ -1050,22 +1099,24 @@ class TimesheetPlus {
 
     renderBotonInicio() {
         const handleClick = async () => {
-            this.mostrarDia()
-            const tituloDia = this.obtenerDiaHoy()
-            const contenedorDia = tituloDia.parentNode
-            await this.agregarNuevoEditorInicioFin()
-            const editoresInicioFin = contenedorDia.querySelectorAll(this.SELECTORES.editoresInicioFin)
-            const ultimoEditor = editoresInicioFin[editoresInicioFin.length - 1]
-            const entradas = ultimoEditor.querySelectorAll(this.SELECTORES.inputTiempo)
-            const entradaInicio = entradas[0]
-            const entradaFin = entradas[1]
-            const ahora = new Date()
-            const fechaInicio = this.ajustarHoraFichaje(ahora, true)
-            const fechaFin = new Date(fechaInicio.getTime() + this.DURACION_ENTRADA_INICIAL)
+            await this.ejecutarOperacion(async () => {
+                this.mostrarDia()
+                const tituloDia = this.obtenerDiaHoy()
+                const contenedorDia = tituloDia.parentNode
+                await this.agregarNuevoEditorInicioFin()
+                const editoresInicioFin = contenedorDia.querySelectorAll(this.SELECTORES.editoresInicioFin)
+                const ultimoEditor = editoresInicioFin[editoresInicioFin.length - 1]
+                const entradas = ultimoEditor.querySelectorAll(this.SELECTORES.inputTiempo)
+                const entradaInicio = entradas[0]
+                const entradaFin = entradas[1]
+                const ahora = new Date()
+                const fechaInicio = this.ajustarHoraFichaje(ahora, true)
+                const fechaFin = new Date(fechaInicio.getTime() + this.DURACION_ENTRADA_INICIAL)
 
-            await this.establecerHoraInput(entradaInicio, fechaInicio)
-            await this.establecerHoraInput(entradaFin, fechaFin)
-            await this.guardarDia()
+                await this.establecerHoraInput(entradaInicio, fechaInicio)
+                await this.establecerHoraInput(entradaFin, fechaFin)
+                await this.guardarDia()
+            })
         }
 
         return TimesheetPlus.html`
@@ -1082,8 +1133,10 @@ class TimesheetPlus {
 
     renderBotonFin() {
         const handleClick = async () => {
-            await this.actualizarUltimaHora()
-            await this.guardarDia()
+            await this.ejecutarOperacion(async () => {
+                await this.actualizarUltimaHora()
+                await this.guardarDia()
+            })
         }
 
         return TimesheetPlus.html`
@@ -1100,7 +1153,9 @@ class TimesheetPlus {
 
     renderBotonAuto() {
         const handleClick = async () => {
-            await this.renderDiaAleatorio()
+            await this.ejecutarOperacion(async () => {
+                await this.renderDiaAleatorio()
+            })
         }
 
         return TimesheetPlus.html`
@@ -1118,16 +1173,19 @@ class TimesheetPlus {
     renderBotonMesAuto() {
         const handleClick = async () => {
             if (confirm('Se llenarán automaticamente todos los días sin rellenar')) {
-                const titulosDias = this.obtenerMain().querySelectorAll(this.SELECTORES.titulosDias)
-                for (const tituloDia of titulosDias) {
-                    const indicadoresDia = tituloDia.querySelector(this.SELECTORES.indicadoresDia)
-                    if (this.esDiaDeTrabajo(indicadoresDia)) {
-                        this.mostrarDia(tituloDia)
-                        if (!this.tieneEditoresInicioFin(tituloDia)) {
-                            await this.renderDiaAleatorio(tituloDia)
+                await this.ejecutarOperacion(async () => {
+                    const titulosDias = this.obtenerMain().querySelectorAll(this.SELECTORES.titulosDias)
+                    for (const tituloDia of titulosDias) {
+                        const indicadoresDia = tituloDia.querySelector(this.SELECTORES.indicadoresDia)
+                        if (this.esDiaDeTrabajo(indicadoresDia)) {
+                            this.mostrarDia(tituloDia)
+                            if (!this.tieneEditoresInicioFin(tituloDia)) {
+                                await this.renderDiaAleatorio(tituloDia)
+                            }
                         }
                     }
-                }
+                    await this.repartirMinutosFaltantesHastaHoy()
+                })
             }
         }
 
@@ -1248,17 +1306,20 @@ class TimesheetPlus {
      * - En espera: solo el tiempo desde la última sincronización, a la derecha.
      */
     renderizarBarraEstado() {
-        const enPausa = !this.sincronizando && !this.usuarioEstaInactivo()
+        const enOperacion = this.operacionEnCurso
+        const enPausa = !enOperacion && !this.sincronizando && !this.usuarioEstaInactivo()
 
-        this.barraEstado.classList.toggle('activo', this.sincronizando)
+        this.barraEstado.classList.toggle('activo', this.sincronizando || enOperacion)
         this.barraEstado.classList.toggle('pausa', enPausa)
 
-        // Izquierda: solo el indicador de pausa (cuando el usuario está activo)
-        const izquierda = enPausa ? '⏸ En pausa' : ''
+        // Izquierda: indicador de operación en curso o de pausa
+        const izquierda = enOperacion ? '⏳ Rellenando…' : (enPausa ? '⏸ En pausa' : '')
 
         // Derecha: estado de sincronización en curso o tiempo desde la última
         let derecha
-        if (this.sincronizando) {
+        if (enOperacion) {
+            derecha = '<span class="sync-spinner"></span>Trabajando…'
+        } else if (this.sincronizando) {
             derecha = '<span class="sync-spinner"></span>Actualizando…'
         } else if (this.ultimaSincronizacion) {
             const segundos = Math.round((Date.now() - this.ultimaSincronizacion.getTime()) / 1000)
@@ -1332,17 +1393,13 @@ class TimesheetPlus {
 
             // Obtener configuración de horarios
             const inicio = parseInt(this.storageGet('hora-inicio')) || 8
-            const comida = parseInt(this.storageGet('hora-comida')) || 14
-            const duracionComida = parseInt(this.storageGet('duracion-comida')) || 20
 
-            // Primera entrada (mañana)
+            // Tramo único continuo (sin pausa de comida)
             const minutoInicio = this.enteroAleatorio(0, 15)
             inicio1.setHours(inicio)
             inicio1.setMinutes(minutoInicio)
 
-            const minutosHastaComida = (comida - inicio) * 60
-            const minutosTrabajadosManana = this.enteroAleatorio(this.enteroAleatorio(minutosHastaComida - 30, minutosHastaComida), this.enteroAleatorio(minutosHastaComida, minutosHastaComida + 30))
-            const fin1 = new Date(inicio1.getTime() + (minutosTrabajadosManana * 60000))
+            const fin1 = new Date(inicio1.getTime() + (this.config.minutosJornada * 60000))
 
             const fechaInicio1 = this.ajustarHoraFichaje(inicio1, false)
             const fechaFin1 = this.ajustarHoraFichaje(fin1, false)
@@ -1350,27 +1407,134 @@ class TimesheetPlus {
             await this.establecerHoraInput(entradaInicio, fechaInicio1)
             await this.establecerHoraInput(entradaFin, fechaFin1)
 
-            // Segunda entrada (tarde)
-            await this.agregarNuevoEditorInicioFin(tituloDia)
-            editoresInicioFin = contenedorDia.querySelectorAll(this.SELECTORES.editoresInicioFin)
-            const ultimoEditor = editoresInicioFin[editoresInicioFin.length - 1]
-            entradas = ultimoEditor.querySelectorAll(this.SELECTORES.inputTiempo)
-            entradaInicio = entradas[0]
-            entradaFin = entradas[1]
-
-            const duracionComidaAleatoria = this.enteroAleatorio(duracionComida - 5, duracionComida + 5)
-            const inicio2 = new Date(fin1.getTime() + (duracionComidaAleatoria * 60000))
-            const minutosTarde = this.config.minutosJornada - minutosTrabajadosManana
-            const fin2 = new Date(inicio2.getTime() + ((minutosTarde + this.enteroAleatorio(-5, 10)) * 60000))
-
-            const fechaInicio2 = this.ajustarHoraFichaje(inicio2, false)
-            const fechaFin2 = this.ajustarHoraFichaje(fin2, false)
-
-            await this.establecerHoraInput(entradaInicio, fechaInicio2)
-            await this.establecerHoraInput(entradaFin, fechaFin2)
-
             await this.guardarDia(tituloDia)
         }
+    }
+
+    /**
+     * Reparte los minutos que falten hasta el día de hoy entre los días que
+     * ya tienen datos, añadiéndolos de 5 en 5 minutos de manera equilibrada y
+     * sin que ningún día supere su jornada objetivo (8h enteros / 4h medios).
+     * No hace nada si hasta hoy se han cumplido (o superado) los minutos objetivo.
+     */
+    async repartirMinutosFaltantesHastaHoy() {
+        const titulosDias = this.obtenerMain().querySelectorAll(this.SELECTORES.titulosDias)
+        const ahora = new Date()
+
+        // Recorrer los días laborables hasta hoy (incluido) calculando por día:
+        // minutos trabajados, objetivo y capacidad restante hasta ese objetivo.
+        // Se hace de forma autónoma (sin obtenerDiasTrabajadosMes) para no
+        // depender de sus comprobaciones de interrupción, ya que este reparto
+        // se ejecuta justo tras el clic del usuario en "Mes auto".
+        const candidatos = []
+        let minutosTrabajados = 0
+        let minutosObjetivo = 0
+
+        for (const tituloDia of titulosDias) {
+            const indicadoresDia = tituloDia.querySelector(this.SELECTORES.indicadoresDia)
+            const esMedio = await this.esMedioDiaDeTrabajo(tituloDia)
+
+            if (!esMedio && !this.esDiaDeTrabajo(indicadoresDia)) {
+                continue
+            }
+
+            // Solo días hasta hoy (incluido)
+            const fechaDia = this.obtenerFechaDia(tituloDia)
+            const mismoMes = fechaDia.getMonth() === ahora.getMonth()
+            const antesHoy = fechaDia <= ahora
+            if (mismoMes && !antesHoy) {
+                continue
+            }
+
+            const objetivoDia = esMedio ? this.config.minutosMediaJornada : this.config.minutosJornada
+            minutosObjetivo += objetivoDia
+
+            const contenedorDia = tituloDia.parentNode
+            const resumenDia = contenedorDia.querySelector(this.SELECTORES.resumenDia)
+            const minutosDia = this.parsearTiempoResumen(resumenDia.innerText).totalMinutos
+            minutosTrabajados += minutosDia
+
+            // Solo son candidatos los días que ya tienen datos y aún no llegan al objetivo
+            const capacidad = objetivoDia - minutosDia
+            if (minutosDia > 0 && capacidad > 0) {
+                candidatos.push({ tituloDia, capacidad })
+            }
+        }
+
+        // Minutos que faltan para alcanzar el objetivo hasta hoy
+        const minutosFaltantes = minutosObjetivo - minutosTrabajados
+        if (minutosFaltantes <= 0 || candidatos.length === 0) {
+            return
+        }
+
+        // Repartir en bloques de 5 min de forma equilibrada (round-robin),
+        // sin que ningún día supere su capacidad restante hasta el objetivo.
+        const extraPorDia = candidatos.map(() => 0)
+        let quedanBloques = Math.floor(minutosFaltantes / 5)
+        let seRepartioAlgo = true
+        while (quedanBloques > 0 && seRepartioAlgo) {
+            seRepartioAlgo = false
+            for (let i = 0; i < candidatos.length && quedanBloques > 0; i++) {
+                if (extraPorDia[i] + 5 <= candidatos[i].capacidad) {
+                    extraPorDia[i] += 5
+                    quedanBloques--
+                    seRepartioAlgo = true
+                }
+            }
+        }
+
+        // Aplicar los minutos extra a cada día
+        for (let i = 0; i < candidatos.length; i++) {
+            if (extraPorDia[i] > 0) {
+                await this.ampliarTiempoDia(candidatos[i].tituloDia, extraPorDia[i])
+            }
+        }
+    }
+
+    /**
+     * Amplía el tiempo de un día sumando minutos extra a la hora de fin
+     * del último tramo (editor) de ese día.
+     */
+    async ampliarTiempoDia(tituloDia, minutosExtra) {
+        this.mostrarDia(tituloDia)
+        await new Promise(r => setTimeout(r, this.DELAY_ESPERA_CORTO))
+
+        const contenedorDia = tituloDia.parentNode
+        const editoresInicioFin = contenedorDia.querySelectorAll(this.SELECTORES.editoresInicioFin)
+        if (editoresInicioFin.length === 0) {
+            return
+        }
+
+        const ultimoEditor = editoresInicioFin[editoresInicioFin.length - 1]
+        const entradas = ultimoEditor.querySelectorAll(this.SELECTORES.inputTiempo)
+        const entradaFin = entradas[1]
+
+        const horaFin = this.leerHoraInput(entradaFin)
+        if (horaFin === null) {
+            return
+        }
+
+        const nuevaHoraFin = new Date()
+        nuevaHoraFin.setHours(horaFin.horas)
+        nuevaHoraFin.setMinutes(horaFin.minutos + minutosExtra)
+
+        await this.establecerHoraInput(entradaFin, nuevaHoraFin)
+        await this.guardarDia(tituloDia)
+    }
+
+    /**
+     * Lee la hora (horas y minutos) mostrada en un input de tiempo.
+     * Devuelve null si no hay un valor numérico válido.
+     */
+    leerHoraInput(entradaTiempo) {
+        const entradaHoras = entradaTiempo.querySelector(this.SELECTORES.inputHoras)
+        const entradaMinutos = entradaTiempo.querySelector(this.SELECTORES.inputMinutos)
+        const horas = parseInt(entradaHoras.innerText)
+        const minutos = parseInt(entradaMinutos.innerText)
+        if (isNaN(horas) || isNaN(minutos)) {
+            return null
+        }
+        return { horas, minutos }
     }
 
     /**
