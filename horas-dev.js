@@ -93,7 +93,9 @@ class TimesheetPlus {
             ],
             meses: ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"],
             minutosJornada: 8 * 60,
-            minutosMediaJornada: 4 * 60
+            minutosMediaJornada: 4 * 60,
+            minutosComida: 30,
+            horaInicioComida: '14:00'
         }
 
         // Estado reactivo del componente
@@ -997,7 +999,9 @@ class TimesheetPlus {
     }
 
     renderConfiguracionHTML() {
-        const inicio = parseInt(this.storageGet('hora-inicio')) || 8
+        const inicio = this.obtenerHoraInicio()
+        const minutosComida = this.obtenerMinutosComida()
+        const horaInicioComida = this.obtenerHoraInicioComida()
         const textoBotonAleatorio = "Registrar tiempos aleatoriamente en el actual día expandido"
 
         const handleAleatorio = async () => {
@@ -1013,7 +1017,34 @@ class TimesheetPlus {
         }
 
         const handleHoraInicio = (e) => {
-            this.storageSet('hora-inicio', e.target.value)
+            const hora = this.normalizarHora(e.target.value, null)
+            if (hora !== null) {
+                e.target.value = hora
+                this.storageSet('hora-inicio', hora)
+            } else {
+                e.target.value = this.obtenerHoraInicio()
+            }
+        }
+
+        const handleMinutosComida = (e) => {
+            const minutos = Number(e.target.value)
+            if (e.target.value !== '' && Number.isFinite(minutos) && minutos >= 0) {
+                const minutosRedondeados = Math.round(minutos / 5) * 5
+                e.target.value = minutosRedondeados
+                this.storageSet('minutos-comida', minutosRedondeados)
+            } else {
+                e.target.value = this.obtenerMinutosComida()
+            }
+        }
+
+        const handleHoraInicioComida = (e) => {
+            const hora = this.normalizarHora(e.target.value, null)
+            if (hora !== null) {
+                e.target.value = hora
+                this.storageSet('hora-inicio-comida', hora)
+            } else {
+                e.target.value = this.obtenerHoraInicioComida()
+            }
         }
 
         return TimesheetPlus.html`
@@ -1026,9 +1057,21 @@ class TimesheetPlus {
                 </div>
                 <div class="contenido1">
                     <div class="d-flex ai-c">
-                        <div class="gris" style="width:9em">&#9857; Hora inicio</div>
+                        <div class="gris" style="width:9em">Hora inicio</div>
                         <div class="flex">
-                            <input class="texto" type="number" value="${inicio}" placeholder="8" @change=${handleHoraInicio}>
+                            <input class="texto" type="time" lang="es-ES" step="60" value="${inicio}" @change=${handleHoraInicio}>
+                        </div>
+                    </div>
+                    <div class="d-flex ai-c">
+                        <div class="gris" style="width:9em">Hora inicio comida</div>
+                        <div class="flex">
+                            <input class="texto" type="time" lang="es-ES" step="60" value="${horaInicioComida}" @change=${handleHoraInicioComida}>
+                        </div>
+                    </div>
+                    <div class="d-flex ai-c">
+                        <div class="gris" style="width:9em">Minutos comida</div>
+                        <div class="flex">
+                            <input class="texto" type="number" min="0" step="any" value="${minutosComida}" @change=${handleMinutosComida}>
                         </div>
                     </div>
                 </div>
@@ -1242,6 +1285,29 @@ class TimesheetPlus {
         return fecha
     }
 
+    obtenerHoraInicio() {
+        return this.normalizarHora(this.storageGet('hora-inicio'), '08:00')
+    }
+
+    obtenerHoraInicioComida() {
+        return this.normalizarHora(this.storageGet('hora-inicio-comida'), this.config.horaInicioComida)
+    }
+
+    obtenerMinutosComida() {
+        const guardados = this.storageGet('minutos-comida')
+        const minutos = guardados == null ? this.config.minutosComida : Number(guardados)
+        return Number.isFinite(minutos) && minutos >= 0 ? Math.round(minutos / 5) * 5 : this.config.minutosComida
+    }
+
+    normalizarHora(valor, predeterminada) {
+        const partes = /^(\d{1,2})(?::(\d{2}))?$/.exec(String(valor ?? ''))
+        if (!partes || Number(partes[1]) > 23 || Number(partes[2] ?? 0) > 59) {
+            return predeterminada
+        }
+        const minutos = Math.round((Number(partes[1]) * 60 + Number(partes[2] ?? 0)) / 5) * 5 % (24 * 60)
+        return `${String(Math.floor(minutos / 60)).padStart(2, '0')}:${String(minutos % 60).padStart(2, '0')}`
+    }
+
     /**
      * Guarda los minutos restantes del mes en localStorage
      */
@@ -1381,31 +1447,51 @@ class TimesheetPlus {
         
         if (tituloDia) {
             this.mostrarDia(tituloDia)
-            await this.eliminarTodosLosEditores(tituloDia)
             const contenedorDia = tituloDia.parentNode
-            let editoresInicioFin = contenedorDia.querySelectorAll(this.SELECTORES.editoresInicioFin)
-            const primerEditor = editoresInicioFin[0]
-            let entradas = primerEditor.querySelectorAll(this.SELECTORES.inputTiempo)
-            let entradaInicio = entradas[0]
-            let entradaFin = entradas[1]
-
             const inicio1 = new Date()
 
             // Obtener configuración de horarios
-            const inicio = parseInt(this.storageGet('hora-inicio')) || 8
+            const [horaInicio, minutoInicio] = this.obtenerHoraInicio().split(':').map(Number)
 
-            // Tramo único continuo (sin pausa de comida)
-            const minutoInicio = this.enteroAleatorio(0, 15)
-            inicio1.setHours(inicio)
-            inicio1.setMinutes(minutoInicio)
-
-            const fin1 = new Date(inicio1.getTime() + (this.config.minutosJornada * 60000))
+            const minutosAleatorios = this.enteroAleatorio(0, 15)
+            inicio1.setHours(horaInicio, minutoInicio + minutosAleatorios, 0, 0)
 
             const fechaInicio1 = this.ajustarHoraFichaje(inicio1, false)
-            const fechaFin1 = this.ajustarHoraFichaje(fin1, false)
+            const minutosComida = this.obtenerMinutosComida()
+            const horaInicioComida = this.obtenerHoraInicioComida()
+            const [horaComida, minutoComida] = horaInicioComida.split(':').map(Number)
+            const fechaFin1 = new Date(fechaInicio1)
+            if (minutosComida > 0) {
+                fechaFin1.setHours(horaComida, minutoComida, 0, 0)
+                const minutosPrimerTramo = (fechaFin1 - fechaInicio1) / 60000
+                const fechaFinJornada = new Date(fechaInicio1.getTime() + (this.config.minutosJornada + minutosComida) * 60000)
+                if (minutosPrimerTramo <= 0 || minutosPrimerTramo >= this.config.minutosJornada || fechaFinJornada.getDate() !== fechaInicio1.getDate()) {
+                    alert('La comida debe comenzar durante la jornada y la jornada debe terminar antes de medianoche.')
+                    return
+                }
+            } else {
+                fechaFin1.setTime(fechaInicio1.getTime() + this.config.minutosJornada * 60000)
+            }
+
+            await this.eliminarTodosLosEditores(tituloDia)
+            let editoresInicioFin = contenedorDia.querySelectorAll(this.SELECTORES.editoresInicioFin)
+            let entradas = editoresInicioFin[0].querySelectorAll(this.SELECTORES.inputTiempo)
+            const entradaInicio = entradas[0]
+            const entradaFin = entradas[1]
 
             await this.establecerHoraInput(entradaInicio, fechaInicio1)
             await this.establecerHoraInput(entradaFin, fechaFin1)
+
+            if (minutosComida > 0) {
+                await this.agregarNuevoEditorInicioFin(tituloDia)
+                editoresInicioFin = contenedorDia.querySelectorAll(this.SELECTORES.editoresInicioFin)
+                entradas = editoresInicioFin[editoresInicioFin.length - 1].querySelectorAll(this.SELECTORES.inputTiempo)
+                const fechaInicio2 = new Date(fechaFin1.getTime() + minutosComida * 60000)
+                const minutosPrimerTramo = (fechaFin1 - fechaInicio1) / 60000
+                const fechaFin2 = new Date(fechaInicio2.getTime() + (this.config.minutosJornada - minutosPrimerTramo) * 60000)
+                await this.establecerHoraInput(entradas[0], fechaInicio2)
+                await this.establecerHoraInput(entradas[1], fechaFin2)
+            }
 
             await this.guardarDia(tituloDia)
         }
